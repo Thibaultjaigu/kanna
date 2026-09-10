@@ -1919,13 +1919,20 @@ export class AgentCoordinator {
    * does today. The marker is written first: a shutdown that dies partway
    * through leaves a chat resumable-but-not-cancelled, which the resume pass
    * handles, rather than cancelled-but-forgotten, which it can't.
+   *
+   * A turn parked on a tool request (AskUserQuestion, plan approval) is not
+   * marked. Cancelling it feeds the harness a discarded result, and a resume
+   * would then tell the model to "continue" past a question nobody answered or
+   * a plan nobody approved. Those chats stay interrupted so the user re-asks.
    */
   async interruptForShutdown() {
-    for (const chatId of [...this.activeTurns.keys()]) {
-      try {
-        await this.store.setTurnResumePending(chatId, true)
-      } catch {
-        // Best effort — a chat we can't mark still gets cancelled cleanly.
+    for (const [chatId, active] of [...this.activeTurns.entries()]) {
+      if (!active.pendingTool) {
+        try {
+          await this.store.setTurnResumePending(chatId, true)
+        } catch {
+          // Best effort — a chat we can't mark still gets cancelled cleanly.
+        }
       }
       await this.cancel(chatId)
     }

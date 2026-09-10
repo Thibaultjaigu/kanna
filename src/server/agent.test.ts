@@ -2544,6 +2544,76 @@ describe("AgentCoordinator restart resume", () => {
     expect(store.messages.some((entry) => entry.kind === "interrupted")).toBe(true)
   })
 
+  test("shutdown does not mark a chat that is waiting on the user", async () => {
+    let releaseInterrupt!: () => void
+    const interrupted = new Promise<void>((resolve) => {
+      releaseInterrupt = resolve
+    })
+
+    const fakeCodexManager = {
+      async startSession() {},
+      async startTurn(args: { onToolRequest: (request: any) => Promise<unknown> }): Promise<HarnessTurn> {
+        async function* stream() {
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "system_init",
+              provider: "codex",
+              model: "gpt-5.4",
+              tools: [],
+              agents: [],
+              slashCommands: [],
+              mcpServers: [],
+            }),
+          }
+          void args.onToolRequest({
+            tool: {
+              kind: "tool",
+              toolKind: "ask_user_question",
+              toolName: "AskUserQuestion",
+              toolId: "question-1",
+              input: { questions: [{ question: "Provider?" }] },
+            },
+          })
+          await interrupted
+        }
+
+        return {
+          provider: "codex",
+          stream: stream(),
+          interrupt: async () => {
+            releaseInterrupt()
+          },
+          close: () => {},
+        }
+      },
+    }
+
+    const store = createFakeStore()
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+      codexManager: fakeCodexManager as never,
+    })
+
+    await coordinator.send({
+      type: "chat.send",
+      chatId: "chat-1",
+      provider: "codex",
+      content: "ask me something",
+    })
+    await waitFor(() => coordinator.getPendingTool("chat-1")?.toolKind === "ask_user_question")
+
+    await coordinator.interruptForShutdown()
+
+    // A resume would tell the model to carry on past a question nobody
+    // answered, so the chat is cancelled like today and left unmarked.
+    expect(store.chat.resumePending).toBeUndefined()
+    expect(coordinator.activeTurns.size).toBe(0)
+    expect(store.messages.some((entry) => entry.kind === "tool_result" && entry.toolId === "question-1")).toBe(true)
+    expect(store.messages.some((entry) => entry.kind === "interrupted")).toBe(true)
+  })
+
   test("a user-initiated cancel leaves no resume marker", async () => {
     const events = new AsyncEventQueue<any>()
     const fakeCodexManager = {
