@@ -1,4 +1,5 @@
-import { appendFile, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises"
+import type { PerformanceLog } from "./performance-log"
+import { appendFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { existsSync, readFileSync as readFileSyncImmediate } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
@@ -317,11 +318,13 @@ export class EventStore {
   private legacySidebarProjectOrder: string[] = []
   private sidebarProjectOrder: string[] = []
   private snapshotHasLegacyMessages = false
-  // Small LRU of hot transcripts. One slot used to thrash badly: any read of
-  // another chat (board view, prune sweep) evicted the actively streaming
-  // chat, forcing a synchronous full-file re-read on its next event.
+  // A byte budget avoids eviction on every read when several chats stay open.
   private readonly transcriptCache = new Map<string, TranscriptEntry[]>()
-  private static readonly TRANSCRIPT_CACHE_LIMIT = 8
+  private static readonly TRANSCRIPT_CACHE_LIMIT = 256
+  private static readonly TRANSCRIPT_CACHE_BYTES = 128 * 1024 * 1024
+  private readonly transcriptBytes = new Map<string, number>()
+  private readonly transcriptLoads = new Map<string, Promise<void>>()
+  private queuedWrites = 0
   /**
    * Offsets into each chat's payload sidecar (`transcript-payloads.ts`).
    * Built on first payload read, evicted with the transcript cache.
@@ -339,7 +342,7 @@ export class EventStore {
    */
   onTurnStarted?: (chatId: string) => void
 
-  constructor(dataDir = getDataDir(homedir())) {
+  constructor(dataDir = getDataDir(homedir()), private readonly diagnostics?: PerformanceLog) {
     this.dataDir = dataDir
     this.snapshotPath = path.join(this.dataDir, "snapshot.json")
     this.projectsLogPath = path.join(this.dataDir, "projects.jsonl")
@@ -519,6 +522,7 @@ export class EventStore {
     this.sidebarProjectOrder = []
     this.legacySidebarProjectOrder = []
     this.transcriptCache.clear()
+    this.transcriptBytes.clear()
     this.payloadIndexes.clear()
   }
 
@@ -1008,13 +1012,98 @@ export class EventStore {
     }
   }
 
+  private enqueueWrite(run: () => Promise<void>) {
+    const queuedAt = performance.now()
+    this.queuedWrites += 1
+    const write = this.writeChain.then(async () => {
+      this.diagnostics?.record("store_queue_wait_ms", performance.now() - queuedAt)
+      try {
+        await run()
+      } finally {
+        this.queuedWrites -= 1
+      }
+    })
+    // The caller receives its error. Later writes still get their own attempt.
+    this.writeChain = write.catch(() => { this.diagnostics?.record("store_write_errors") })
+    return write
+  }
+
+  getResourceCounts() {
+    return {
+      transcriptCaches: this.transcriptCache.size,
+      transcriptCacheEstimatedBytes: [...this.transcriptBytes.values()].reduce((sum, size) => sum + size, 0),
+      transcriptCacheEntries: [...this.transcriptCache.values()].reduce((sum, entries) => sum + entries.length, 0),
+      transcriptLoads: this.transcriptLoads.size,
+      payloadIndexes: this.payloadIndexes.size,
+      storeQueuedWrites: this.queuedWrites,
+    }
+  }
+
+  /** Reads share the write queue so a partial append cannot enter the cache. */
+  prepareTranscript(chatId: string): Promise<void> {
+    if (this.transcriptCache.has(chatId)) return Promise.resolve()
+    const pending = this.transcriptLoads.get(chatId)
+    if (pending) return pending
+    const load = this.enqueueWrite(async () => { await this.loadTranscriptAsync(chatId) })
+      .finally(() => { this.transcriptLoads.delete(chatId) })
+    this.transcriptLoads.set(chatId, load)
+    return load
+  }
+
+  private async loadTranscriptAsync(chatId: string) {
+    if (this.transcriptCache.has(chatId)) return
+    const started = performance.now()
+    const legacy = this.legacyMessagesByChatId.get(chatId)
+    if (legacy) {
+      this.setCachedTranscript(chatId, cloneTranscriptEntries(legacy))
+      return
+    }
+    let text: string
+    try {
+      text = await readFile(this.transcriptPath(chatId), "utf8")
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      text = ""
+    }
+    const entries: TranscriptEntry[] = []
+    let start = 0
+    let sliceStarted = performance.now()
+    while (start < text.length) {
+      const newline = text.indexOf("\n", start)
+      const end = newline === -1 ? text.length : newline
+      const line = text.slice(start, end).trim()
+      if (line) entries.push(JSON.parse(line) as TranscriptEntry)
+      start = end + 1
+      if (performance.now() - sliceStarted >= 4) {
+        await new Promise<void>(resolve => setImmediate(resolve))
+        sliceStarted = performance.now()
+      }
+    }
+    this.setCachedTranscript(chatId, entries, text.length * 2 + entries.length * 512)
+    this.diagnostics?.record("transcript_async_load_ms", performance.now() - started)
+    this.diagnostics?.record("transcript_disk_bytes", text.length)
+  }
+
+  getRollingTranscriptWindowStart(chatId: string, currentStart: number, assistantMessages: number) {
+    const entries = this.getTranscriptEntries(chatId)
+    const start = findTranscriptWindowStart(entries, {
+      endExclusive: entries.length,
+      assistantMessages: assistantMessages * 2,
+    })
+    return Math.max(currentStart, start)
+  }
+
+  getTranscriptLength(chatId: string) {
+    return this.getTranscriptEntries(chatId).length
+  }
+
   private append<TEvent extends StoreEvent>(filePath: string, event: TEvent) {
     const payload = `${JSON.stringify(event)}\n`
-    this.writeChain = this.writeChain.then(async () => {
+    const write = this.enqueueWrite(async () => {
       await appendFile(filePath, payload, "utf8")
       this.applyEvent(event)
     })
-    return this.writeChain
+    return write
   }
 
   private transcriptPath(chatId: string) {
@@ -1028,7 +1117,7 @@ export class EventStore {
   private getPayloadIndex(chatId: string) {
     const cached = this.payloadIndexes.get(chatId)
     if (cached) return cached
-    while (this.payloadIndexes.size >= EventStore.TRANSCRIPT_CACHE_LIMIT) {
+    while (this.payloadIndexes.size >= 16) {
       const oldest = this.payloadIndexes.keys().next().value
       if (oldest === undefined) break
       this.payloadIndexes.delete(oldest)
@@ -1056,6 +1145,7 @@ export class EventStore {
 
   private dropTranscriptCaches(chatId: string) {
     this.transcriptCache.delete(chatId)
+    this.transcriptBytes.delete(chatId)
     this.payloadIndexes.delete(chatId)
   }
 
@@ -1113,14 +1203,23 @@ export class EventStore {
     return entries
   }
 
-  private setCachedTranscript(chatId: string, entries: TranscriptEntry[]) {
+  private setCachedTranscript(chatId: string, entries: TranscriptEntry[], estimatedBytes?: number) {
     this.transcriptCache.delete(chatId)
-    while (this.transcriptCache.size >= EventStore.TRANSCRIPT_CACHE_LIMIT) {
-      const oldest = this.transcriptCache.keys().next().value
-      if (oldest === undefined) break
-      this.transcriptCache.delete(oldest)
-    }
     this.transcriptCache.set(chatId, entries)
+    this.transcriptBytes.set(chatId, estimatedBytes ?? JSON.stringify(entries).length * 2 + entries.length * 512)
+    this.trimTranscriptCache(chatId)
+  }
+
+  private trimTranscriptCache(keepChatId: string) {
+    let bytes = [...this.transcriptBytes.values()].reduce((sum, size) => sum + size, 0)
+    for (const oldest of this.transcriptCache.keys()) {
+      if (this.transcriptCache.size <= EventStore.TRANSCRIPT_CACHE_LIMIT && bytes <= EventStore.TRANSCRIPT_CACHE_BYTES) break
+      // One large transcript must remain usable until its reader finishes.
+      if (oldest === keepChatId) continue
+      bytes -= this.transcriptBytes.get(oldest) ?? 0
+      this.dropTranscriptCaches(oldest)
+      this.diagnostics?.record("transcript_cache_evictions")
+    }
   }
 
   private loadTranscriptFromDisk(chatId: string) {
@@ -1129,6 +1228,7 @@ export class EventStore {
       return []
     }
 
+    const started = performance.now()
     const text = readFileSyncImmediate(transcriptPath, "utf8")
     if (!text.trim()) return []
 
@@ -1138,6 +1238,7 @@ export class EventStore {
       if (!line) continue
       entries.push(JSON.parse(line) as TranscriptEntry)
     }
+    this.diagnostics?.record("transcript_sync_load_ms", performance.now() - started)
     return entries
   }
 
@@ -1216,11 +1317,11 @@ export class EventStore {
       return
     }
 
-    this.writeChain = this.writeChain.then(async () => {
+    const write = this.enqueueWrite(async () => {
       await this.writeSidebarProjectOrderFile(uniqueProjectIds)
       this.sidebarProjectOrder = [...uniqueProjectIds]
     })
-    return this.writeChain
+    return write
   }
 
   async createChat(projectId: string) {
@@ -1320,7 +1421,7 @@ export class EventStore {
     if (sourceEntries.length > 0) {
       const transcriptPath = this.transcriptPath(chatId)
       const payload = sourceEntries.map((entry) => JSON.stringify(entry)).join("\n")
-      this.writeChain = this.writeChain.then(async () => {
+      const write = this.enqueueWrite(async () => {
         await this.ensureTranscriptsDir()
         await copyTranscriptMedia(this.dataDir, sourceChatId, chatId)
         // `getMessages` merged the payloads back in, so the fork's transcript
@@ -1348,7 +1449,7 @@ export class EventStore {
         }
         this.setCachedTranscript(chatId, cloneTranscriptEntries(sourceEntries))
       })
-      await this.writeChain
+      await write
       // The fork inherits the copied conversation's recency: without a
       // `lastMessageAt` it reads as an empty draft and stays hidden from every
       // recency-driven sidebar section until its first new message. Set by the
@@ -1790,10 +1891,11 @@ export class EventStore {
       await this.recordLastMessageAt(chatId, entry.createdAt)
     }
     const transcriptPath = this.transcriptPath(chatId)
-    this.writeChain = this.writeChain.then(async () => {
+    const write = this.enqueueWrite(async () => {
       await this.ensureTranscriptsDir()
       // Bytes the header points at go to disk first (image files, then the
       // payload line), so a header on disk never names something missing.
+      if (entry.kind === "tool_result" && !entry.trimmed) await this.loadTranscriptAsync(chatId)
       const stored = await externalizeEntryImages(entry, { dataDir: this.dataDir, chatId })
       const { header, payload } = splitTranscriptEntry(stored, (toolId) => this.isInlineResult(chatId, toolId))
       if (payload) {
@@ -1808,8 +1910,12 @@ export class EventStore {
       // byte-identical to what a cold disk read would produce, and callers
       // that keep mutating their entry can't alias into the cache.
       this.transcriptCache.get(chatId)?.push(JSON.parse(headerLine) as TranscriptEntry)
+      if (this.transcriptCache.has(chatId)) {
+        this.transcriptBytes.set(chatId, (this.transcriptBytes.get(chatId) ?? 0) + headerLine.length * 2 + 512)
+        this.trimTranscriptCache(chatId)
+      }
     })
-    return this.writeChain
+    return write
   }
 
   async enqueueMessage(chatId: string, message: Omit<QueuedChatMessage, "id" | "createdAt"> & Partial<Pick<QueuedChatMessage, "id" | "createdAt">>) {
@@ -2211,6 +2317,7 @@ export class EventStore {
     this.clearLegacyTranscriptState()
     await this.compact()
     this.transcriptCache.clear()
+    this.transcriptBytes.clear()
     this.payloadIndexes.clear()
     onProgress?.(`${LOG_PREFIX} transcript migration complete`)
     return true
@@ -2239,7 +2346,7 @@ export class EventStore {
       const chatId = name.slice(0, -".jsonl".length)
       const transcriptPath = path.join(this.transcriptsDir, name)
       stats.chats += 1
-      this.writeChain = this.writeChain.then(async () => {
+      const write = this.enqueueWrite(async () => {
         let result: Awaited<ReturnType<typeof slimTranscriptFile>>
         // Calls precede their results in a transcript, so this set is
         // complete by the time a result asks about its tool.
@@ -2270,7 +2377,7 @@ export class EventStore {
           `${LOG_PREFIX} transcript slim: ${name} ${formatMegabytes(result.bytesBefore)} → ${formatMegabytes(result.bytesAfter)}`
         )
       })
-      await this.writeChain
+      await write
     }
 
     await writeFile(this.slimMarkerPath, `${JSON.stringify({ version: SLIM_SWEEP_VERSION, completedAt: Date.now() })}\n`, "utf8")

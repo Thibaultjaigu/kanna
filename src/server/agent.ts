@@ -985,6 +985,25 @@ export class AgentCoordinator {
     return this.codexManager
   }
 
+  getResourceCounts() {
+    return {
+      activeTurns: this.activeTurns.size,
+      drainingStreams: this.drainingStreams.size,
+      claudeSessions: this.claudeSessions.size,
+      ...this.codexManager.getResourceCounts(),
+      ...this.piManager.getResourceCounts(),
+    }
+  }
+
+  dispose() {
+    for (const session of this.claudeSessions.values()) session.session.close()
+    this.claudeSessions.clear()
+    for (const stream of this.drainingStreams.values()) stream.turn.close()
+    this.drainingStreams.clear()
+    this.codexManager.stopAll()
+    this.piManager.dispose()
+  }
+
   getActiveStatuses() {
     const statuses = new Map<string, KannaStatus>()
     for (const [chatId, turn] of this.activeTurns.entries()) {
@@ -1089,6 +1108,7 @@ export class AgentCoordinator {
       claudeSession.session.close()
       this.claudeSessions.delete(chatId)
     }
+    this.codexManager.stopSession(chatId)
     this.piManager.closeChat(chatId)
     this.emitStateChange(chatId)
   }

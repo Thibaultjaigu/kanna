@@ -372,6 +372,10 @@ export class PiAgentManager {
     return collectPiSkills(loader)
   }
 
+  getResourceCounts() {
+    return { piSessions: this.sessions.size }
+  }
+
   closeChat(chatId: string) {
     const existing = this.sessions.get(chatId)
     if (!existing) return

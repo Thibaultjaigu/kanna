@@ -98,6 +98,8 @@ export class TerminalOutputLog {
     return this.version
   }
 
+  get retainedCharacters() { return this.retained }
+
   /** Exposed for tests: how many segments are held. */
   get segmentCount() {
     return this.chunks.length
@@ -261,6 +263,15 @@ function signalTerminalProcessGroup(subprocess: Bun.Subprocess | null, signal: N
 export class TerminalManager {
   private readonly sessions = new Map<string, TerminalSession>()
   private readonly listeners = new Set<(event: TerminalEvent) => void>()
+
+  getResourceCounts() {
+    const sessions = [...this.sessions.values()]
+    return {
+      terminalSessions: sessions.length,
+      runningTerminals: sessions.filter(session => session.status === "running").length,
+      terminalOutputCharacters: sessions.reduce((sum, session) => sum + session.output.retainedCharacters, 0),
+    }
+  }
 
   onEvent(listener: (event: TerminalEvent) => void) {
     this.listeners.add(listener)

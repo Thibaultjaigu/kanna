@@ -1,3 +1,4 @@
+import { recordClientPerformance } from "./clientPerformance"
 import type {
   ClientCommand,
   ClientEnvelope,
@@ -20,6 +21,7 @@ const PING_TIMEOUT_MS = 4_000
 
 interface SubscriptionEntry<TSnapshot, TEvent = never> {
   topic: SubscriptionTopic
+  paused?: boolean
   listener: SnapshotListener<TSnapshot>
   eventListener?: EventListener<TEvent>
   /**
@@ -59,6 +61,7 @@ export class KannaSocket {
     void this.ensureHealthyConnection()
   }
   private readonly handleVisibilityChange = () => {
+    this.syncVisibility()
     if (document.visibilityState === "visible") {
       this.startHeartbeat()
       void this.ensureHealthyConnection()
@@ -102,6 +105,7 @@ export class KannaSocket {
       pending.reject(new Error("Socket disposed"))
     }
     this.pending.clear()
+    this.outboundQueue.length = 0
   }
 
   onStatus(listener: StatusListener) {
@@ -223,6 +227,8 @@ export class KannaSocket {
       this.emitStatus("connected")
       this.startHeartbeat()
       for (const [id, subscription] of this.subscriptions.entries()) {
+        subscription.paused = this.shouldPause(subscription.topic)
+        if (subscription.paused) continue
         const topic = subscription.topicOnReconnect?.() ?? subscription.topic
         this.sendNow({ v: 1, type: "subscribe", id, topic })
       }
@@ -238,20 +244,25 @@ export class KannaSocket {
       this.lastMessageAt = Date.now()
       let payload: ServerEnvelope
       try {
-        payload = JSON.parse(String(event.data)) as ServerEnvelope
+        const started = performance.now()
+        const text = String(event.data)
+        payload = JSON.parse(text) as ServerEnvelope
+        recordClientPerformance("socket_parse_ms", performance.now() - started)
+        recordClientPerformance("socket_message_bytes", text.length)
+        recordClientPerformance("socket_messages", 1)
       } catch {
         return
       }
 
       if (payload.type === "snapshot") {
         const subscription = this.subscriptions.get(payload.id)
-        subscription?.listener(payload.snapshot.data)
+        if (!subscription?.paused) subscription?.listener(payload.snapshot.data)
         return
       }
 
       if (payload.type === "event") {
         const subscription = this.subscriptions.get(payload.id)
-        subscription?.eventListener?.(payload.event)
+        if (!subscription?.paused) subscription?.eventListener?.(payload.event)
         return
       }
 
@@ -405,7 +416,37 @@ export class KannaSocket {
     this.pingPromise = null
   }
 
+  private shouldPause(topic: SubscriptionTopic) {
+    return document.visibilityState === "hidden" && ["chat", "project-git", "terminal"].includes(topic.type)
+  }
+
+  private syncVisibility() {
+    for (const [id, subscription] of this.subscriptions) {
+      const paused = this.shouldPause(subscription.topic)
+      if (paused === Boolean(subscription.paused)) continue
+      subscription.paused = paused
+      if (this.ws?.readyState !== WebSocket.OPEN) continue
+      if (paused) this.sendNow({ v: 1, type: "unsubscribe", id })
+      else this.sendNow({ v: 1, type: "subscribe", id, topic: subscription.topicOnReconnect?.() ?? subscription.topic })
+    }
+  }
+
+  getResourceCounts() {
+    return {
+      socket_pending_commands: this.pending.size,
+      socket_subscriptions: this.subscriptions.size,
+      socket_queued_commands: this.outboundQueue.length,
+    }
+  }
+
   private enqueue(envelope: ClientEnvelope) {
+    if (envelope.type === "subscribe") {
+      const subscription = this.subscriptions.get(envelope.id)
+      if (subscription) subscription.paused = this.shouldPause(subscription.topic)
+      if (subscription?.paused || this.ws?.readyState !== WebSocket.OPEN) return
+    }
+    // Reconnect replays the current subscriptions, not stale queued changes.
+    if (envelope.type === "unsubscribe" && this.ws?.readyState !== WebSocket.OPEN) return
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.sendNow(envelope)
       return

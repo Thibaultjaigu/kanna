@@ -19,7 +19,7 @@ import { deriveChatSnapshot } from "./read-models"
  * cut down to what begins there. Keep the two in step.
  */
 export interface ChatWindowRouteDeps {
-  store: Pick<EventStore, "state" | "getChat" | "getClientTranscript" | "getInitialTranscriptWindowStart">
+  store: Pick<EventStore, "state" | "getChat" | "getClientTranscript" | "getInitialTranscriptWindowStart"> & Partial<Pick<EventStore, "prepareTranscript">>
   agent: { getActiveStatuses: () => Map<string, KannaStatus>; getDrainingChatIds: () => Set<string> }
   appSettings: Pick<AppSettingsManager, "getSnapshot">
 }
@@ -29,17 +29,17 @@ export const CHAT_WINDOW_ROUTE_PATTERN = /^\/api\/chats\/([^/]+)\/window$/
 /** The window a socket with no cache gets, or null for a chat that is gone. */
 export function readChatWindow(chatId: string, deps: ChatWindowRouteDeps): ChatSnapshot | null {
   const { store, agent, appSettings } = deps
+  const windowStart = store.getChat(chatId)
+    ? store.getInitialTranscriptWindowStart(chatId, appSettings.getSnapshot().transcript.windowAssistantMessages)
+    : 0
   const full = deriveChatSnapshot(
     store.state,
     agent.getActiveStatuses(),
     agent.getDrainingChatIds(),
     chatId,
-    (id) => store.getClientTranscript(id)
+    (id) => store.getClientTranscript(id, windowStart)
   )
   if (!full) return null
-  const windowStart = store.getChat(chatId)
-    ? store.getInitialTranscriptWindowStart(chatId, appSettings.getSnapshot().transcript.windowAssistantMessages)
-    : 0
   const offset = Math.max(0, Math.min(windowStart - full.startIndex, full.messages.length))
   if (offset === 0) return full
   return { ...full, messages: full.messages.slice(offset), startIndex: full.startIndex + offset }
@@ -58,6 +58,7 @@ export async function handleChatWindow(req: Request, url: URL, deps: ChatWindowR
     return new Response(null, { status: 405, headers: { Allow: "GET" } })
   }
   const chatId = decodeURIComponent(match[1])
+  if (deps.store.getChat(chatId)) await deps.store.prepareTranscript?.(chatId)
   const data = readChatWindow(chatId, deps)
   if (!data) {
     return Response.json({ error: "Chat not found" }, { status: 404 })

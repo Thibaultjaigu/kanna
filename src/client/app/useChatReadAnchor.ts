@@ -162,6 +162,8 @@ export function useChatReadAnchor(
   useEffect(() => {
     function handleVisibilityChange() {
       if (document.visibilityState === "hidden") flush()
+      // A resumed subscription must learn whether this tab still follows the tail.
+      else lastWrittenKeyRef.current = null
     }
     document.addEventListener("visibilitychange", handleVisibilityChange)
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange)

@@ -1490,6 +1490,10 @@ async function readRepoStamp(args: {
 }
 
 export class DiffStore {
+  getResourceCounts() {
+    return { diffProjects: this.states.size, diffRefreshes: this.activeRefreshes.size, diffQueuedRefreshes: this.queuedRefreshes.size }
+  }
+
   private readonly states = new Map<string, StoredChatDiffState>()
   private readonly snapshotVersions = new Map<string, number>()
   private readonly lineCountCaches = new Map<string, LineCountCache>()

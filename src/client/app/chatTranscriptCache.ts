@@ -1,3 +1,4 @@
+import { DEFAULT_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES, trimTranscriptWindow } from "../../shared/transcript-window"
 import type { ChatSnapshot, TranscriptEntry } from "../../shared/types"
 
 /**
@@ -54,6 +55,39 @@ export interface CachedSpan {
   start: number
   end: number
   endEntryId: string
+}
+
+const memoryWindows = new Map<string, CachedTranscriptWindow>()
+const diskWrites = new Map<string, CachedTranscriptWindow>()
+let diskWriteTimer: ReturnType<typeof setTimeout> | null = null
+
+export function readMemoryCachedWindow(chatId: string) {
+  const cached = memoryWindows.get(chatId) ?? null
+  if (cached) {
+    memoryWindows.delete(chatId)
+    memoryWindows.set(chatId, cached)
+  }
+  return cached
+}
+
+function retainWindow(value: CachedTranscriptWindow) {
+  const trimmed = trimTranscriptWindow(cachedWindowToMessages(value), DEFAULT_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES)
+  const window = { ...value, startIndex: trimmed.startIndex, entries: trimmed.messages }
+  memoryWindows.delete(value.chatId)
+  memoryWindows.set(value.chatId, window)
+  while (memoryWindows.size > 8) memoryWindows.delete(memoryWindows.keys().next().value!)
+  diskWrites.set(value.chatId, window)
+  while (diskWrites.size > 8) diskWrites.delete(diskWrites.keys().next().value!)
+  if (diskWriteTimer !== null) return
+  // Encoding and IndexedDB writes occur after navigation can commit.
+  diskWriteTimer = setTimeout(() => {
+    diskWriteTimer = null
+    const pending = [...diskWrites.values()]
+    diskWrites.clear()
+    for (const value of pending) {
+      if (JSON.stringify(value.entries).length <= MAX_CACHED_WINDOW_BYTES) void writeCachedWindow(value)
+    }
+  }, 0)
 }
 
 function openDatabase(): Promise<IDBDatabase | null> {
@@ -113,6 +147,8 @@ export async function readCachedWindow(chatId: string): Promise<CachedTranscript
 }
 
 export async function deleteCachedWindow(chatId: string): Promise<void> {
+  memoryWindows.delete(chatId)
+  diskWrites.delete(chatId)
   const db = await getDatabase()
   if (!db) return
   try {
@@ -177,8 +213,7 @@ export function createTranscriptCacheWriter() {
     if (!value) return
     // Runs once a turn has settled, so a single stringify of a trimmed
     // transcript is cheap next to the write it guards.
-    if (JSON.stringify(value.entries).length > MAX_CACHED_WINDOW_BYTES) return
-    void writeCachedWindow(value)
+    retainWindow(value)
   }
 
   return {
@@ -191,7 +226,11 @@ export function createTranscriptCacheWriter() {
         entries: snapshot.messages,
         updatedAt: Date.now(),
       }
-      if (isStreaming) return
+      if (isStreaming) {
+        if (timer !== null) clearTimeout(timer)
+        timer = null
+        return
+      }
       if (timer !== null) return
       timer = setTimeout(flush, WRITE_DEBOUNCE_MS)
     },

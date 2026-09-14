@@ -1117,7 +1117,7 @@ export class CodexAppServerManager {
   stopSession(chatId: string) {
     const context = this.sessions.get(chatId)
     if (!context) return
-    context.closed = true
+    this.failContext(context, "Codex session closed")
     context.pendingTurn?.queue.finish()
     this.sessions.delete(chatId)
     try {
@@ -1168,7 +1168,7 @@ export class CodexAppServerManager {
     void (async () => {
       for await (const line of stderr) {
         if (line.trim()) {
-          context.stderrLines.push(line.trim())
+          context.stderrLines = [line.trim().slice(-8192)]
         }
       }
     })()
@@ -1640,6 +1640,15 @@ export class CodexAppServerManager {
     }
     context.pendingRequests.clear()
     context.closed = true
+    if (this.sessions.get(context.chatId) === context) this.sessions.delete(context.chatId)
+  }
+
+  getResourceCounts() {
+    return {
+      codexSessions: this.sessions.size,
+      codexPendingRequests: [...this.sessions.values()].reduce((sum, session) => sum + session.pendingRequests.size, 0),
+      codexStderrChars: [...this.sessions.values()].reduce((sum, session) => sum + session.stderrLines.reduce((total, line) => total + line.length, 0), 0),
+    }
   }
 
   private async sendRequest<TResult>(context: SessionContext, method: string, params: unknown): Promise<TResult> {

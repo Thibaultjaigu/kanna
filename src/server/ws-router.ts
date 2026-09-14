@@ -1,3 +1,4 @@
+import type { PerformanceLog } from "./performance-log"
 import type { ServerWebSocket } from "bun"
 import { homedir } from "node:os"
 import { PROTOCOL_VERSION } from "../shared/types"
@@ -72,10 +73,13 @@ export interface ClientState {
    * incremental push carries it whenever this differs from what is current.
    */
   chatProvidersSent?: Map<string, string>
+  chatFollowing?: Map<string, boolean>
+  chatWindowChecks?: Map<string, number>
   protectedDraftChatIds?: Set<string>
 }
 
 interface CreateWsRouterArgs {
+  diagnostics?: PerformanceLog
   store: EventStore
   diffStore: Pick<DiffStore, "getProjectSnapshot" | "getSnapshotVersion" | "refreshSnapshot" | "initializeGit" | "getGitHubPublishInfo" | "checkGitHubRepoAvailability" | "publishToGitHub" | "listBranches" | "previewMergeBranch" | "mergeBranch" | "syncBranch" | "checkoutBranch" | "createBranch" | "generateCommitMessage" | "commitFiles" | "discardFile" | "ignoreFile" | "readPatch">
   worktreeProbe: Pick<WorktreeProbe, "getStates" | "getRepoLabels" | "getProjectsWithoutRepo">
@@ -191,6 +195,7 @@ function ensureSnapshotSignatures(ws: ServerWebSocket<ClientState>) {
 }
 
 export function createWsRouter({
+  diagnostics,
   store,
   diffStore,
   worktreeProbe,
@@ -560,8 +565,8 @@ export function createWsRouter({
     return earliest ?? 0
   }
 
-  function getChatSnapshotData(chatId: string, cache?: SnapshotComputationCache) {
-    const key = chatId
+  function getChatSnapshotData(chatId: string, cache?: SnapshotComputationCache, fromIndex?: number) {
+    const key = `${chatId}:${fromIndex ?? "window"}:${typeof store.getTranscriptLength === "function" && store.getChat(chatId) ? store.getTranscriptLength(chatId) : ""}`
     const existing = cache?.chat?.get(key)
     if (existing !== undefined) {
       return existing
@@ -571,7 +576,7 @@ export function createWsRouter({
       agent.getActiveStatuses(),
       agent.getDrainingChatIds(),
       chatId,
-      (id) => store.getClientTranscript(id, getEarliestChatWindowStart(id))
+      (id) => store.getClientTranscript(id, fromIndex ?? getEarliestChatWindowStart(id))
     )
     if (cache) {
       (cache.chat ??= new Map()).set(key, data)
@@ -673,7 +678,7 @@ export function createWsRouter({
     if (!store.getChat(topic.chatId)) return
     // Populates the transcript cache as a side effect, which is what makes the
     // boundary entry visible to `getEntryIdAt`.
-    store.getClientTranscript(topic.chatId)
+    getChatWindowStart(ws, subscriptionId, topic.chatId)
     if (store.getEntryIdAt(topic.chatId, span.end - 1) !== span.endEntryId) return
     ensureChatEntrySpans(ws).set(subscriptionId, { start: span.start, end: span.end })
     // What the client already holds is its window; the server's default
@@ -719,12 +724,28 @@ export function createWsRouter({
         continue
       }
       if (topic.type === "chat") {
-        const full = getChatSnapshotData(topic.chatId, options?.cache)
-        const data = full ? sliceChatWindow(full, getChatWindowStart(ws, id, topic.chatId)) : full
+        if (store.prepareTranscript && store.getChat(topic.chatId)) await store.prepareTranscript(topic.chatId)
+        if (ws.data.subscriptions.get(id) !== topic) continue
+        const started = performance.now()
         const spans = ensureChatEntrySpans(ws)
+        let windowStart = store.state.chatsById.has(topic.chatId) ? getChatWindowStart(ws, id, topic.chatId) : 0
+        const end = typeof store.getTranscriptLength === "function" && store.getChat(topic.chatId) ? store.getTranscriptLength(topic.chatId) : undefined
+        const checks = ws.data.chatWindowChecks ??= new Map()
+        if (end !== undefined && ws.data.chatFollowing?.get(id) && end - (checks.get(id) ?? windowStart) >= 64) {
+          checks.set(id, end)
+          windowStart = store.getRollingTranscriptWindowStart(topic.chatId, windowStart, transcriptWindowAssistantMessages())
+          ensureChatWindowStarts(ws).set(id, windowStart)
+        }
+        const previous = spans.get(id)
+        const advanced = previous && windowStart > previous.start
+        const fromIndex = !advanced && previous && previous.start === windowStart && end !== undefined && previous.end <= end
+          ? previous.end
+          : windowStart
+        const full = getChatSnapshotData(topic.chatId, options?.cache, fromIndex)
+        const data = full ? sliceChatWindow(full, windowStart) : full
         const outlineCounts = ensureChatOutlineCounts(ws)
         const providersSent = ensureChatProvidersSent(ws)
-        let body = toSocketChatSnapshot(data, spans.get(id))
+        let body = toSocketChatSnapshot(data, advanced ? undefined : previous)
         // The outline is a few KB and would otherwise ride every streamed
         // push; an incremental body carries it only when a prompt was added.
         const outlineCount = data?.outline?.length ?? 0
@@ -732,8 +753,10 @@ export function createWsRouter({
         if (body?.incremental) {
           // The read anchor never changes mid-chat, and the client latches it
           // from the first full snapshot (`foldChatSnapshot` carries it forward).
-          const { readAnchor, ...rest } = body
-          body = rest as typeof body
+          if (snapshotSignatures.has(id)) {
+            const { readAnchor, ...rest } = body
+            body = rest as typeof body
+          }
           // The provider catalog is a few KB too, but it is not fixed: the
           // server discovers models at runtime (applyCodexModels and friends).
           // It rides an incremental push whenever this subscription has not
@@ -757,7 +780,7 @@ export function createWsRouter({
         // Record the whole window, not the slice that went out — it is what
         // this socket now holds, and what the next push measures against.
         if (data) {
-          spans.set(id, { start: data.startIndex, end: data.startIndex + data.messages.length })
+          spans.set(id, { start: windowStart, end: data.startIndex + data.messages.length })
           outlineCounts.set(id, outlineCount)
           providersSent.set(id, providersJson)
         } else {
@@ -766,6 +789,9 @@ export function createWsRouter({
           providersSent.delete(id)
         }
         sendSerializedSnapshot(ws, id, snapshotJson)
+        diagnostics?.record("chat_snapshot_ms", performance.now() - started)
+        diagnostics?.record("chat_snapshot_bytes", snapshotJson.length)
+        diagnostics?.record("chat_window_entries", Math.max(0, (end ?? 0) - windowStart))
         continue
       }
       // project-git has a cheap version-counter signature, so an unchanged
@@ -1047,6 +1073,11 @@ export function createWsRouter({
   async function handleCommand(ws: ServerWebSocket<ClientState>, message: Extract<ClientEnvelope, { type: "command" }>) {
     const { command, id } = message
     try {
+      if ("chatId" in command && typeof command.chatId === "string" && store.prepareTranscript && store.getChat(command.chatId)) {
+        if (["chat.getEntryDebugRaw", "chat.getToolEntries", "chat.loadOlder", "chat.getReadAnchor"].includes(command.type)) {
+          await store.prepareTranscript(command.chatId)
+        }
+      }
       switch (command.type) {
         case "system.ping": {
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
@@ -1503,6 +1534,11 @@ export function createWsRouter({
           // No broadcast on purpose. The anchor is not part of any snapshot,
           // so scrolling stays free of fan-out, and a device sitting on an
           // open chat never gets its viewport yanked by another device.
+          for (const [subscriptionId, topic] of ws.data.subscriptions) {
+            if (topic.type === "chat" && topic.chatId === command.chatId) {
+              (ws.data.chatFollowing ??= new Map()).set(subscriptionId, command.atEnd)
+            }
+          }
           await store.setChatReadAnchor(command.chatId, command.messageId, command.atEnd, {
             transcriptWidth: command.transcriptWidth,
             offsetFromMessage: command.offsetFromMessage,
@@ -1559,6 +1595,7 @@ export function createWsRouter({
               ...(command.all ? { all: true } : {}),
             })
             starts.set(subscriptionId, next)
+            ws.data.chatFollowing?.set(subscriptionId, false)
             startIndex = next
             await pushSnapshots(ws, { skipPrune: true, onlySubscriptionId: subscriptionId })
           }
@@ -1835,11 +1872,30 @@ export function createWsRouter({
   }
 
   return {
+    getResourceCounts() {
+      let subscriptions = 0
+      let providerEntries = 0
+      let windows = 0
+      for (const ws of sockets) {
+        subscriptions += ws.data.subscriptions.size
+        providerEntries += ws.data.chatProvidersSent?.size ?? 0
+        windows += ws.data.chatEntrySpans?.size ?? 0
+      }
+      return { sockets: sockets.size, subscriptions, subscriptionProviderEntries: providerEntries, chatWindows: windows }
+    },
     handleOpen(ws: ServerWebSocket<ClientState>) {
       sockets.add(ws)
     },
     handleClose(ws: ServerWebSocket<ClientState>) {
       sockets.delete(ws)
+      ws.data.subscriptions.clear()
+      ws.data.snapshotSignatures?.clear()
+      ws.data.chatEntrySpans?.clear()
+      ws.data.chatProvidersSent?.clear()
+      ws.data.chatOutlineCounts?.clear()
+      ws.data.chatWindowStarts?.clear()
+      ws.data.chatFollowing?.clear()
+      ws.data.chatWindowChecks?.clear()
     },
     broadcastSnapshots,
     broadcastChatStateImmediately,
@@ -1876,6 +1932,18 @@ export function createWsRouter({
         ws.data.chatEntrySpans?.delete(parsed.id)
         ws.data.chatWindowStarts?.delete(parsed.id)
         ws.data.chatOutlineCounts?.delete(parsed.id)
+        ws.data.chatProvidersSent?.delete(parsed.id)
+        ws.data.chatFollowing?.delete(parsed.id)
+        ws.data.chatWindowChecks?.delete(parsed.id)
+        if (parsed.topic.type === "chat" && store.prepareTranscript && store.getChat(parsed.topic.chatId)) {
+          try {
+            await store.prepareTranscript(parsed.topic.chatId)
+          } catch {
+            send(ws, { v: PROTOCOL_VERSION, type: "error", id: parsed.id, message: "Cannot read transcript" })
+            return
+          }
+          if (ws.data.subscriptions.get(parsed.id) !== parsed.topic) return
+        }
         seedChatEntrySpanFromClient(ws, parsed.id, parsed.topic)
         if (parsed.topic.type === "local-projects") {
           void refreshDiscovery().then(() => {
@@ -1917,6 +1985,9 @@ export function createWsRouter({
         ws.data.chatEntrySpans?.delete(parsed.id)
         ws.data.chatWindowStarts?.delete(parsed.id)
         ws.data.chatOutlineCounts?.delete(parsed.id)
+        ws.data.chatProvidersSent?.delete(parsed.id)
+        ws.data.chatFollowing?.delete(parsed.id)
+        ws.data.chatWindowChecks?.delete(parsed.id)
         send(ws, { v: PROTOCOL_VERSION, type: "ack", id: parsed.id })
         return
       }

@@ -1,6 +1,8 @@
+import { homedir } from "node:os"
+import { PerformanceLog } from "./performance-log"
 import path from "node:path"
 import { stat } from "node:fs/promises"
-import { APP_NAME, getRuntimeProfile, LOG_PREFIX } from "../shared/branding"
+import { APP_NAME, getDataDir, getRuntimeProfile, LOG_PREFIX } from "../shared/branding"
 import type { ChatAttachment } from "../shared/types"
 import type { ShareMode } from "../shared/share"
 import {
@@ -144,7 +146,8 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   const strictPort = options.strictPort ?? false
   const runtimeProfile = getRuntimeProfile()
   const auth = options.password ? createAuthManager(options.password, { trustProxy: options.trustProxy ?? false }) : null
-  const store = new EventStore(options.dataDir)
+  const diagnostics = new PerformanceLog(options.dataDir ?? getDataDir(homedir()), undefined, options.update?.version)
+  const store = new EventStore(options.dataDir, diagnostics)
   const diffStore = new DiffStore(store.dataDir)
   const machineDisplayName = getMachineDisplayName()
   // Mutable: device-code pairing can attach a cloud runtime mid-flight, and
@@ -288,6 +291,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   })
 
   router = createWsRouter({
+    diagnostics,
     store,
     diffStore,
     worktreeProbe,
@@ -555,6 +559,32 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
             return withOriginAgentCluster(upgradeWebSocket())
           }
 
+          if (url.pathname === "/api/diagnostics/client") {
+            if (req.method !== "POST") return new Response(null, { status: 405 })
+            if (!req.headers.get("content-type")?.startsWith("application/json")) return new Response(null, { status: 415 })
+            const reader = req.body?.getReader()
+            if (!reader) return new Response(null, { status: 400 })
+            let bytes = 0
+            const chunks: Uint8Array[] = []
+            try {
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                bytes += value.length
+                if (bytes > 8192) {
+                  await reader.cancel()
+                  return new Response(null, { status: 413 })
+                }
+                chunks.push(value)
+              }
+              const summary = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+              diagnostics.mergeClientSummary(summary?.metrics, typeof summary?.clientId === "string" ? summary.clientId : undefined)
+              return new Response(null, { status: 204 })
+            } catch {
+              return new Response(null, { status: 400 })
+            } finally { reader.releaseLock() }
+          }
+
           if (url.pathname === "/health") {
             // `instance` lets a second `kanna` invocation detect that this
             // data dir is already being served (single-instance guard). Only
@@ -664,7 +694,10 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
             router.handleOpen(ws)
           },
           message(ws, raw) {
-            router.handleMessage(ws, raw)
+            void router.handleMessage(ws, raw).catch(error => {
+              diagnostics.record("socket_handler_errors")
+              console.error("[ws-router] Handler failed:", error instanceof Error ? error.message : String(error))
+            })
           },
           close(ws) {
             router.handleClose(ws)
@@ -693,6 +726,14 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     cloud: Boolean(options.cloud),
   })
 
+  diagnostics.start(() => ({
+    ...store.getResourceCounts(),
+    ...router.getResourceCounts(),
+    ...agent.getResourceCounts(),
+    ...terminals.getResourceCounts(),
+    ...diffStore.getResourceCounts(),
+  }))
+
   const shutdown = async () => {
     pairSession?.stop()
     // A runtime handed in by the CLI is stopped by the CLI; one this process
@@ -704,7 +745,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     worktreeProbe.stop()
     // Cancels every in-flight turn *and* marks its chat, so the next boot
     // restarts the work instead of leaving it interrupted (see resume-turns.ts).
-    await agent.interruptForShutdown()
+    try { await agent.interruptForShutdown() } finally { agent.dispose() }
     router.dispose()
     providerAuth.dispose()
     usageLimits.dispose()
@@ -713,6 +754,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     terminals.closeAll()
     portTunnels.stopAll()
     await store.compact()
+    await diagnostics.stop()
     server.stop(true)
   }
 
