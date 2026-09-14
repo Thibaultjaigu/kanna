@@ -10,12 +10,13 @@ import { Input } from "../components/ui/input"
 import { TooltipProvider } from "../components/ui/tooltip"
 import { APP_NAME } from "../../shared/branding"
 import { useChatSoundPreferencesStore } from "../stores/chatSoundPreferencesStore"
-import type { ChatSoundPreference } from "../stores/chatSoundPreferencesStore"
+import type { ChatBrowserNotificationPreference, ChatSoundPreference } from "../stores/chatSoundPreferencesStore"
+import { shouldShowChatBrowserNotification, showChatBrowserNotification } from "../lib/chatBrowserNotifications"
 import { getSetupLaunchAction, useProviderAuthStore } from "../stores/providerAuthStore"
 import { SetupWizard } from "../components/auth/SetupWizard"
 import type { ChatPreview, ChatTouchedFilesResult, ProviderAuthSnapshot } from "../../shared/types"
 import { playChatNotificationSound, shouldPlayChatSound } from "../lib/chatSounds"
-import { getBrowserWindowTitle, getChatSoundBurstCount } from "./chatNotifications"
+import { getBrowserWindowTitle, getChatNotificationEvents, getChatSoundBurstCount, type ChatNotificationEvent } from "./chatNotifications"
 import { KannaSidebar } from "./KannaSidebar"
 import { ChatPage } from "./ChatPage"
 import { LocalProjectsPage } from "./LocalProjectsPage"
@@ -199,6 +200,14 @@ export function shouldPlayChatNotificationSound(
   return Boolean(appSettings) && shouldPlayChatSound(preference, doc)
 }
 
+export function shouldShowChatNotificationPopup(
+  appSettings: AppSettingsSnapshot | null,
+  preference: ChatBrowserNotificationPreference,
+  doc: Pick<Document, "visibilityState" | "hasFocus"> = document
+) {
+  return Boolean(appSettings) && shouldShowChatBrowserNotification(preference, doc)
+}
+
 function KannaLayout() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -249,6 +258,7 @@ function KannaLayout() {
 
   const chatSoundPreference = useChatSoundPreferencesStore((store) => store.chatSoundPreference)
   const chatSoundId = useChatSoundPreferencesStore((store) => store.chatSoundId)
+  const chatBrowserNotificationPreference = useChatSoundPreferencesStore((store) => store.chatBrowserNotificationPreference)
   // Pages with no header of their own get a floating back button on mobile.
   const showMobileBackButton = location.pathname === "/home" || location.pathname === "/terminal"
   // Selected as the finished string rather than derived from the snapshot: the
@@ -377,23 +387,65 @@ function KannaLayout() {
   // every one of them. The preferences are read through a ref so the
   // subscription is set up once and never torn down mid-turn (a resubscribe
   // would lose the previous snapshot and swallow the next chime).
-  const soundSettingsRef = useRef({ appSettings: state.appSettings, chatSoundPreference, chatSoundId })
-  useEffect(() => {
-    soundSettingsRef.current = { appSettings: state.appSettings, chatSoundPreference, chatSoundId }
+  const soundSettingsRef = useRef({
+    appSettings: state.appSettings,
+    chatSoundPreference,
+    chatSoundId,
+    chatBrowserNotificationPreference,
+    socket: state.socket,
   })
+  useEffect(() => {
+    soundSettingsRef.current = {
+      appSettings: state.appSettings,
+      chatSoundPreference,
+      chatSoundId,
+      chatBrowserNotificationPreference,
+      socket: state.socket,
+    }
+  })
+  // A system notification names its chat, so the body for a chat that only
+  // turned unread is fetched on demand: the sidebar snapshot deliberately
+  // carries no message previews. A waiting chat already has its question.
+  const resolveChatNotificationMessage = useCallback(async (event: ChatNotificationEvent) => {
+    if (event.message !== null) return event.message
+    const preview = await soundSettingsRef.current.socket
+      .command<ChatPreview>({ type: "chat.getPreview", chatId: event.chatId })
+      .catch(() => null)
+    return preview?.lastAgentMessagePreview ?? ""
+  }, [])
   useEffect(() => {
     return useSidebarStore.subscribe((store, previousStore) => {
       // The first snapshot has nothing to compare against, and treating the
       // empty starting state as "previous" would chime once per unread chat on
       // every page load.
       if (!previousStore.ready) return
+      const {
+        appSettings,
+        chatSoundPreference: preference,
+        chatSoundId: soundId,
+        chatBrowserNotificationPreference: popupPreference,
+      } = soundSettingsRef.current
+
       const burstCount = getChatSoundBurstCount(previousStore.data, store.data)
-      if (burstCount <= 0) return
-      const { appSettings, chatSoundPreference: preference, chatSoundId: soundId } = soundSettingsRef.current
-      if (!shouldPlayChatNotificationSound(appSettings, preference)) return
-      void playChatNotificationSound(soundId, burstCount).catch(() => undefined)
+      if (burstCount > 0 && shouldPlayChatNotificationSound(appSettings, preference)) {
+        void playChatNotificationSound(soundId, burstCount).catch(() => undefined)
+      }
+
+      if (!shouldShowChatNotificationPopup(appSettings, popupPreference)) return
+      for (const event of getChatNotificationEvents(previousStore.data, store.data)) {
+        void resolveChatNotificationMessage(event).then((message) => {
+          showChatBrowserNotification({
+            ...event,
+            message,
+            onClick: () => {
+              window.focus()
+              navigate(`/chat/${event.chatId}`)
+            },
+          })
+        })
+      }
     })
-  }, [])
+  }, [navigate, resolveChatNotificationMessage])
 
   return (
     <div className="flex h-[100dvh] min-h-[100dvh] overflow-hidden">

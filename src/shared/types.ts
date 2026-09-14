@@ -8,6 +8,8 @@ export type AgentProvider = "claude" | "codex" | "cursor" | "pi"
 export type LlmProviderKind = "openai" | "openrouter" | "custom"
 export type AppThemePreference = "light" | "dark" | "system"
 export type ChatSoundPreference = "never" | "unfocused" | "always"
+/** Same gates as the chime, applied to system notifications. Off by default: it needs a permission prompt. */
+export type ChatBrowserNotificationPreference = ChatSoundPreference
 export type ChatSoundId = "blow" | "bottle" | "frog" | "funk" | "glass" | "ping" | "pop" | "purr" | "tink"
 export type DefaultProviderPreference = "last_used" | AgentProvider
 /**
@@ -976,6 +978,12 @@ export interface SidebarChatRow {
   /** Tool kind the chat is waiting on when status is waiting_for_user (e.g. "ask_user_question"). */
   pendingToolKind?: string
   /**
+   * The question or plan summary behind `pendingToolKind`, so a system
+   * notification can quote it. Only set while the chat is waiting; message
+   * previews stay out of the sidebar (see `chat.getPreview`).
+   */
+  pendingUserInputPreview?: string
+  /**
    * Best-effort hint that this chat is relevant to the project's uncommitted
    * work: its last turn ended after the working tree became dirty. Project-
    * scoped, so every chat active since the dirt appeared is flagged — not just
@@ -1157,6 +1165,7 @@ export interface AppSettingsSnapshot {
   theme: AppThemePreference
   chatSoundPreference: ChatSoundPreference
   chatSoundId: ChatSoundId
+  chatBrowserNotificationPreference: ChatBrowserNotificationPreference
   terminal: {
     scrollbackLines: number
     minColumnWidth: number
@@ -1229,6 +1238,7 @@ export interface AppSettingsPatch {
   theme?: AppThemePreference
   chatSoundPreference?: ChatSoundPreference
   chatSoundId?: ChatSoundId
+  chatBrowserNotificationPreference?: ChatBrowserNotificationPreference
   submitWhileRunning?: SubmitWhileRunning
   newSidebarEnabled?: boolean
   newProjectsDirectory?: string
@@ -2202,4 +2212,6 @@ export interface ResolvedChatReadAnchor {
 export interface PendingToolSnapshot {
   toolUseId: string
   toolKind: "ask_user_question" | "exit_plan_mode"
+  /** One line of what the tool is asking; see `SidebarChatRow.pendingUserInputPreview`. */
+  preview?: string
 }

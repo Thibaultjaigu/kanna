@@ -21,6 +21,7 @@ import {
   type AppSettingsPatch,
   type AppSettingsSnapshot,
   type AppThemePreference,
+  type ChatBrowserNotificationPreference,
   type ChatSoundId,
   type ChatSoundPreference,
   type DefaultProviderPreference,
@@ -36,6 +37,7 @@ interface AppSettingsFile {
   theme?: unknown
   chatSoundPreference?: unknown
   chatSoundId?: unknown
+  chatBrowserNotificationPreference?: unknown
   submitWhileRunning?: unknown
   terminal?: {
     scrollbackLines?: unknown
@@ -89,6 +91,9 @@ const MAX_TERMINAL_MIN_COLUMN_WIDTH = 900
 const DEFAULT_EDITOR_PRESET: EditorPreset = "cursor"
 const DEFAULT_CHAT_SOUND_PREFERENCE: ChatSoundPreference = "always"
 const DEFAULT_CHAT_SOUND_ID: ChatSoundId = "funk"
+// Off by default: turning it on triggers the browser's permission prompt,
+// which should only ever happen because the user asked for it.
+const DEFAULT_CHAT_BROWSER_NOTIFICATION_PREFERENCE: ChatBrowserNotificationPreference = "never"
 // Queue by default: interrupting a running turn is the rarer, more disruptive
 // intent, so it is the one you reach for deliberately.
 const DEFAULT_SUBMIT_WHILE_RUNNING: SubmitWhileRunning = "queue"
@@ -128,6 +133,12 @@ function normalizeChatSoundId(value: unknown): ChatSoundId {
   }
 }
 
+function normalizeChatBrowserNotificationPreference(value: unknown): ChatBrowserNotificationPreference {
+  return value === "never" || value === "unfocused" || value === "always"
+    ? value
+    : DEFAULT_CHAT_BROWSER_NOTIFICATION_PREFERENCE
+}
+
 function normalizeSubmitWhileRunning(value: unknown): SubmitWhileRunning {
   return value === "steer" ? "steer" : DEFAULT_SUBMIT_WHILE_RUNNING
 }
@@ -155,6 +166,7 @@ function toFilePayload(state: AppSettingsState) {
     theme: state.theme,
     chatSoundPreference: state.chatSoundPreference,
     chatSoundId: state.chatSoundId,
+    chatBrowserNotificationPreference: state.chatBrowserNotificationPreference,
     submitWhileRunning: state.submitWhileRunning,
     terminal: state.terminal,
     editor: state.editor,
@@ -182,6 +194,7 @@ function toSnapshot(
     theme: state.theme,
     chatSoundPreference: state.chatSoundPreference,
     chatSoundId: state.chatSoundId,
+    chatBrowserNotificationPreference: state.chatBrowserNotificationPreference,
     submitWhileRunning: state.submitWhileRunning,
     terminal: state.terminal,
     editor: state.editor,
@@ -249,6 +262,7 @@ function normalizeAppSettings(
     theme: normalizeTheme(source?.theme),
     chatSoundPreference: normalizeChatSoundPreference(source?.chatSoundPreference),
     chatSoundId: normalizeChatSoundId(source?.chatSoundId),
+    chatBrowserNotificationPreference: normalizeChatBrowserNotificationPreference(source?.chatBrowserNotificationPreference),
     submitWhileRunning: normalizeSubmitWhileRunning(source?.submitWhileRunning),
     terminal: {
       scrollbackLines: clampNumber(source?.terminal?.scrollbackLines, DEFAULT_TERMINAL_SCROLLBACK, MIN_TERMINAL_SCROLLBACK, MAX_TERMINAL_SCROLLBACK),
@@ -300,6 +314,7 @@ function toComparablePayload(source: AppSettingsFile) {
     theme: source.theme,
     chatSoundPreference: source.chatSoundPreference,
     chatSoundId: source.chatSoundId,
+    chatBrowserNotificationPreference: source.chatBrowserNotificationPreference,
     submitWhileRunning: source.submitWhileRunning,
     terminal: source.terminal,
     editor: source.editor,

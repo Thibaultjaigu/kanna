@@ -174,6 +174,47 @@ describe("read models", () => {
     expect(row!.lastAgentMessageAt! % SIDEBAR_ACTIVITY_RESOLUTION_MS).toBe(0)
   })
 
+  test("carries the pending question only for chats that are waiting", () => {
+    const state = createEmptyState()
+    state.projectsById.set("project-1", {
+      id: "project-1",
+      localPath: "/tmp/project",
+      title: "Project",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    state.projectIdsByPath.set("/tmp/project", "project-1")
+    state.chatsById.set("chat-1", {
+      id: "chat-1",
+      projectId: "project-1",
+      title: "Chat",
+      createdAt: 1,
+      updatedAt: 1,
+      unread: false,
+      provider: "codex",
+      planMode: false,
+      autoPlan: false,
+      sessionToken: "thread-1",
+      lastTurnOutcome: null,
+    })
+    const previews = new Map([["chat-1", "Which runtime should I use?"]])
+
+    const waiting = deriveSidebarData(state, new Map([["chat-1", "waiting_for_user"]]), {
+      nowMs: 1_000_000,
+      pendingToolKinds: new Map([["chat-1", "ask_user_question"]]),
+      pendingUserInputPreviews: previews,
+    })
+    expect(waiting.projectGroups[0]?.chats[0]?.pendingUserInputPreview).toBe("Which runtime should I use?")
+
+    // The router only fills the maps for waiting chats; a stale preview with
+    // no tool kind behind it must not leak onto an idle row.
+    const idle = deriveSidebarData(state, new Map([["chat-1", "idle"]]), {
+      nowMs: 1_000_000,
+      pendingUserInputPreviews: previews,
+    })
+    expect(idle.projectGroups[0]?.chats[0]?.pendingUserInputPreview).toBeUndefined()
+  })
+
   test("uses sidebar-only project titles without changing local project metadata", () => {
     const state = createEmptyState()
     state.projectsById.set("project-1", {

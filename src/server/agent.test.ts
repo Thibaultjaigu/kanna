@@ -925,6 +925,7 @@ describe("AgentCoordinator codex integration", () => {
     })
 
     await waitFor(() => coordinator.getPendingTool("chat-1")?.toolKind === "ask_user_question")
+    expect(coordinator.getPendingTool("chat-1")?.preview).toBe("Provider?")
     await coordinator.cancel("chat-1")
 
     const discardedResult = store.messages.find((entry) => entry.kind === "tool_result" && entry.toolId === "question-1")

@@ -334,10 +334,13 @@ export function createWsRouter({
     const activeStatuses = agent.getActiveStatuses()
     const drainingChatIds = agent.getDrainingChatIds()
     const pendingToolKinds = new Map<string, string>()
+    const pendingUserInputPreviews = new Map<string, string>()
     for (const [chatId, status] of activeStatuses) {
       if (status !== "waiting_for_user") continue
       const pendingTool = agent.getPendingTool(chatId)
-      if (pendingTool) pendingToolKinds.set(chatId, pendingTool.toolKind)
+      if (!pendingTool) continue
+      pendingToolKinds.set(chatId, pendingTool.toolKind)
+      if (pendingTool.preview) pendingUserInputPreviews.set(chatId, pendingTool.preview)
     }
     // Every input to the derive, in one string. `stateVersion` now moves only
     // when an append changed something the sidebar can show (see
@@ -352,6 +355,9 @@ export function createWsRouter({
       JSON.stringify([...activeStatuses].sort()),
       JSON.stringify([...drainingChatIds].sort()),
       JSON.stringify([...pendingToolKinds].sort()),
+      // Two questions of the same kind back to back share a tool kind, so the
+      // text has to be in the key or the second one would show the first.
+      JSON.stringify([...pendingUserInputPreviews].sort()),
     ].join("|")
     // A store without a version (the router tests' stubs mutate state
     // directly) gets no memo rather than a stale sidebar.
@@ -364,6 +370,7 @@ export function createWsRouter({
       sidebarProjectOrder: store.getSidebarProjectOrder(),
       drainingChatIds,
       pendingToolKinds,
+      pendingUserInputPreviews,
       workingTrees: worktreeProbe.getStates(),
       repoLabels: worktreeProbe.getRepoLabels(),
       projectsWithoutRepo: worktreeProbe.getProjectsWithoutRepo(),

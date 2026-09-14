@@ -1,4 +1,5 @@
 import type { KeyboardEvent, ReactNode } from "react"
+import type { ChatBrowserNotificationPreference } from "../../../shared/types"
 import { cn } from "../../lib/utils"
 import type { SettingsRowDef } from "./registry"
 
@@ -18,6 +19,19 @@ export function shouldPreviewChatSoundChange(
   nextValue: string
 ) {
   return previousValue !== nextValue
+}
+
+/**
+ * A browser notification setting only sticks once the permission prompt was
+ * granted; otherwise it falls back to "never" so the picker never claims an
+ * option the browser will silently ignore.
+ */
+export function resolveChatBrowserNotificationPreferenceAfterPermission(
+  requestedPreference: ChatBrowserNotificationPreference,
+  permission: NotificationPermission | "unsupported"
+): ChatBrowserNotificationPreference {
+  if (requestedPreference === "never") return "never"
+  return permission === "granted" ? requestedPreference : "never"
 }
 
 export function handleSettingsInputKeyDown(event: KeyboardEvent<HTMLInputElement>, commit: () => void) {

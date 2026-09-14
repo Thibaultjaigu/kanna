@@ -104,6 +104,12 @@ export const SETTINGS_ROWS = defineRows({
     description: "The bundled sound used for chat notification playback and previews",
     keywords: ["notifications", "audio"],
   },
+  chatBrowserNotifications: {
+    sectionId: "general",
+    title: "Chat Notifications",
+    description: "Show a system notification when a chat starts waiting on you or turns unread",
+    keywords: ["notifications", "browser", "desktop", "system", "popup", "permission"],
+  },
   submitWhileRunning: {
     sectionId: "general",
     title: "Enter While Running",

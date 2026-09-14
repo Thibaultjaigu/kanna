@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { getAppAuthStateFromStatus, shouldPlayChatNotificationSound, shouldRetryAuthStatusRequest } from "./App"
-import { getBrowserWindowTitle, getChatNotificationSnapshot, getChatSoundBurstCount, getNotificationTitleCount } from "./chatNotifications"
+import { getBrowserWindowTitle, getChatNotificationEvents, getChatNotificationSnapshot, getChatSoundBurstCount, getNotificationTitleCount } from "./chatNotifications"
 import { DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, clampSidebarWidth } from "./KannaSidebar"
 import { isBrowserUnfocused, shouldPlayChatSound } from "../lib/chatSounds"
 import type { AppSettingsSnapshot, SidebarChatRow } from "../../shared/types"
@@ -288,6 +288,64 @@ describe("chat sound helpers", () => {
           },
         ])],
     })).toBe(3)
+  })
+
+  test("emits one notification event per chat that turned unread or started waiting", () => {
+    const events = getChatNotificationEvents(previous, {
+      projectGroups: [createProjectGroup([
+          {
+            _id: "chat-1",
+            _creationTime: 1,
+            chatId: "chat-1",
+            title: "Unread",
+            status: "idle",
+            unread: true,
+            localPath: "/tmp/project",
+            provider: null,
+            hasAutomation: false,
+          },
+          {
+            _id: "chat-2",
+            _creationTime: 2,
+            chatId: "chat-2",
+            title: "Waiting",
+            status: "waiting_for_user",
+            unread: false,
+            localPath: "/tmp/project",
+            provider: null,
+            hasAutomation: false,
+            pendingToolKind: "ask_user_question",
+            pendingUserInputPreview: "Which runtime should I use?",
+          },
+        ], "Project title")],
+    })
+
+    expect(events).toEqual([
+      // No preview on the sidebar row, so the body is fetched later.
+      { chatId: "chat-1", projectTitle: "Project title", chatTitle: "Unread", message: null },
+      { chatId: "chat-2", projectTitle: "Project title", chatTitle: "Waiting", message: "Which runtime should I use?" },
+    ])
+  })
+
+  test("still emits an event when the net unread count is unchanged", () => {
+    const before = {
+      projectGroups: [createProjectGroup([
+        { _id: "chat-1", _creationTime: 1, chatId: "chat-1", title: "Already unread", status: "idle" as const, unread: true, localPath: "/tmp/project", provider: null, hasAutomation: false },
+        { _id: "chat-2", _creationTime: 2, chatId: "chat-2", title: "Newly unread", status: "idle" as const, unread: false, localPath: "/tmp/project", provider: null, hasAutomation: false },
+      ], "Project title")],
+    }
+    const after = {
+      projectGroups: [createProjectGroup([
+        { _id: "chat-1", _creationTime: 1, chatId: "chat-1", title: "Already unread", status: "idle" as const, unread: false, localPath: "/tmp/project", provider: null, hasAutomation: false },
+        { _id: "chat-2", _creationTime: 2, chatId: "chat-2", title: "Newly unread", status: "idle" as const, unread: true, localPath: "/tmp/project", provider: null, hasAutomation: false },
+      ], "Project title")],
+    }
+
+    expect(getChatSoundBurstCount(before, after)).toBe(0)
+    expect(getChatNotificationEvents(before, after)).toEqual([
+      { chatId: "chat-2", projectTitle: "Project title", chatTitle: "Newly unread", message: null },
+    ])
+    expect(getChatNotificationEvents(null, after)).toEqual([])
   })
 
   test("does not replay for an already-waiting chat", () => {
