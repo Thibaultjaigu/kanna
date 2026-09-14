@@ -70,7 +70,7 @@ export interface CliRuntimeDeps {
     cloud?: CloudRuntime | null
     allowCloudPairing?: boolean
   }) => Promise<{ port: number; stop: () => Promise<void>; analytics?: AnalyticsReporter }>
-  fetchLatestVersion: (packageName: string) => Promise<string>
+  fetchLatestVersion: (packageName: string, options?: { timeoutMs?: number }) => Promise<string>
   installVersion: (packageName: string, version: string) => UpdateInstallAttemptResult
   installNightly?: () => Promise<NightlyInstallResult>
   openUrl: (url: string) => void
@@ -120,6 +120,8 @@ async function slimTranscripts(log: (message: string) => void): Promise<SlimTran
 }
 
 const MINIMUM_BUN_VERSION = "1.3.5"
+/** Bound on the pre-listen update check; see `fetchLatestPackageVersion`. */
+const STARTUP_UPDATE_CHECK_TIMEOUT_MS = 5_000
 
 function throwShareConflict(share: Exclude<ShareMode, false>, hostFlag: "--host" | "--remote"): never {
   throw new Error(`${getShareCliFlag(share)} cannot be used with ${hostFlag}`)
@@ -328,7 +330,7 @@ async function maybeSelfUpdate(_argv: string[], deps: CliRuntimeDeps) {
 
   let latestVersion: string
   try {
-    latestVersion = await deps.fetchLatestVersion(PACKAGE_NAME)
+    latestVersion = await deps.fetchLatestVersion(PACKAGE_NAME, { timeoutMs: STARTUP_UPDATE_CHECK_TIMEOUT_MS })
   }
   catch (error) {
     deps.warn(`${LOG_PREFIX} update check failed, continuing current version`)
@@ -563,12 +565,16 @@ export function openUrl(url: string) {
   console.log(`${LOG_PREFIX} opened in default browser`)
 }
 
-export async function fetchLatestPackageVersion(packageName: string) {
-  // Timeout, because this is awaited before the server's port opens: a VPN or
-  // captive portal that blackholes the registry would otherwise hang startup
-  // indefinitely on "checking for updates". UpdateManager re-checks post-listen.
+/**
+ * `timeoutMs` is opt-in. The startup check passes one because it is awaited
+ * before the port opens, and a blackholed registry would hang "checking for
+ * updates" forever. The UpdateManager's periodic check and the reinstall
+ * button call this without one: a slow registry there should not turn an
+ * explicit "Update" click into "Update failed".
+ */
+export async function fetchLatestPackageVersion(packageName: string, options?: { timeoutMs?: number }) {
   const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`, {
-    signal: AbortSignal.timeout(5000),
+    signal: options?.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined,
   })
   if (!response.ok) {
     throw new Error(`registry returned ${response.status}`)
