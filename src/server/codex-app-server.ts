@@ -20,6 +20,7 @@ import {
   type AccountRateLimitsUpdatedNotification,
   type CollabAgentToolCallItem,
   type ContextCompactedNotification,
+  type CodexError,
   type CodexModelSummary,
   type CodexRateLimitSnapshot,
   type CodexRequestId,
@@ -31,6 +32,7 @@ import {
   type CommandExecutionRequestApprovalResponse,
   type DynamicToolCallOutputContentItem,
   type DynamicToolCallResponse,
+  type ErrorNotification,
   type FileChangeApprovalDecision,
   type FileChangeRequestApprovalParams,
   type FileChangeRequestApprovalResponse,
@@ -101,6 +103,13 @@ interface PendingTurn {
   planTextByItemId: Map<string, string>
   todoSequence: number
   pendingWebSearchResultToolId: string | null
+  /**
+   * Most informative error from this turn's retry sequence, if it had one.
+   * Kept so a turn that ends up failing can still name the problem — codex
+   * reports the cause once, somewhere in the sequence, and the terminal
+   * notification that follows can be empty.
+   */
+  retryCause: CodexError | null
   resolved: boolean
   onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
   onApprovalRequest?: (
@@ -180,6 +189,50 @@ function codexSystemInitEntry(model: string): TranscriptEntry {
 function errorMessage(value: unknown): string {
   if (value instanceof Error) return value.message
   return String(value)
+}
+
+/**
+ * The cause as one readable token. String variants pass through; object
+ * variants name their single key and, when the upstream sent one, the HTTP
+ * status ("responseStreamDisconnected (HTTP 502)"). Without this the exact
+ * errors a retry sequence is about would read as having no cause at all.
+ */
+function errorDetail(error: CodexError): string {
+  const info = error.codexErrorInfo
+  if (typeof info === "string") return info.trim()
+  if (!info || typeof info !== "object") return ""
+  const [kind, data] = Object.entries(info)[0] ?? []
+  if (!kind) return ""
+  const status = data?.httpStatusCode
+  return typeof status === "number" ? `${kind} (HTTP ${status})` : kind
+}
+
+/**
+ * codex splits an error across `message` and `codexErrorInfo`, and the message
+ * on its own is often just a summary. Keep both when the detail adds anything,
+ * so a failed turn names the cause rather than the category.
+ */
+function formatCodexError(error: CodexError | null | undefined): string {
+  if (!error) return ""
+  const message = error.message?.trim() ?? ""
+  const detail = errorDetail(error)
+  if (!detail || message.includes(detail)) return message
+  return message ? `${message}: ${detail}` : detail
+}
+
+/**
+ * Of the errors in one retry sequence, keep the one that explains the most.
+ * codex mixes a cause ("stream disconnected: unexpected EOF") in with bare
+ * progress notices ("Reconnecting... 2/5") and the order isn't guaranteed —
+ * the sequences in the wild open with a counter — so neither "first wins" nor
+ * "last wins" reliably holds the cause. Prefer whichever carries
+ * `codexErrorInfo`, and otherwise keep the first: letting a counter overwrite
+ * a real cause is the exact failure this fallback exists to prevent.
+ */
+function preferredRetryCause(current: CodexError | null, next: CodexError): CodexError {
+  if (!current) return next
+  if (errorDetail(next) && !errorDetail(current)) return next
+  return current
 }
 
 function parseJsonLine(line: string): unknown | null {
@@ -924,6 +977,7 @@ export class CodexAppServerManager {
       planTextByItemId: new Map(),
       todoSequence: 0,
       pendingWebSearchResultToolId: null,
+      retryCause: null,
       resolved: false,
       onToolRequest: args.onToolRequest,
       onApprovalRequest: args.onApprovalRequest,
@@ -1334,7 +1388,7 @@ export class CodexAppServerManager {
         this.handleContextCompacted(pendingTurn, notification.params)
         return
       case "error":
-        this.failContext(context, notification.params.error.message)
+        this.handleErrorNotification(context, notification.params)
         return
       default:
         return
@@ -1527,11 +1581,41 @@ export class CodexAppServerManager {
         subtype: isCancelled ? "cancelled" : isError ? "error" : "success",
         isError,
         durationMs: 0,
-        result: notification.turn.error?.message ?? "",
+        result: isError
+          ? formatCodexError(notification.turn.error)
+            || formatCodexError(pendingTurn.retryCause)
+            || "Codex turn failed"
+          : formatCodexError(notification.turn.error),
       }),
     })
     pendingTurn.queue.finish()
     context.pendingTurn = null
+  }
+
+  /**
+   * codex reports two different things through `error`. A dropped model stream
+   * arrives with `willRetry: true` and a message that is only a progress
+   * counter ("Reconnecting... 2/5") — the turn is still alive and codex retries
+   * on its own. Failing here killed turns that would have recovered a second
+   * later, and reported the counter as the outcome, which says nothing about
+   * what went wrong. Show it as a status line instead (the transcript renders
+   * only the last one, so it clears itself when the stream comes back) and let
+   * the turn run. Only `willRetry: false` is terminal.
+   */
+  private handleErrorNotification(context: SessionContext, notification: ErrorNotification) {
+    const message = formatCodexError(notification.error) || "Codex reported an error"
+    if (!notification.willRetry) {
+      this.failContext(context, message)
+      return
+    }
+
+    const pendingTurn = context.pendingTurn
+    if (!pendingTurn || pendingTurn.resolved) return
+    pendingTurn.retryCause = preferredRetryCause(pendingTurn.retryCause, notification.error)
+    pendingTurn.queue.push({
+      type: "transcript",
+      entry: timestamped({ kind: "status", status: message }),
+    })
   }
 
   private failContext(context: SessionContext, message: string) {
