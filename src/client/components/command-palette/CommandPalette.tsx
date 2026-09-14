@@ -1441,6 +1441,7 @@ export function CommandPalette({ state }: { state: KannaState }) {
     }
     if (page === "project-chats" && projectChatsTargetId !== null && projectChatsGroup) {
       map.set("project-chats-new", projectChatsGroup.localPath)
+      map.set("project-chats-copy-path", projectChatsGroup.localPath)
     }
     for (const group of projectResults) {
       map.set(`project-${group.groupKey}`, group.localPath)
@@ -1816,6 +1817,21 @@ export function CommandPalette({ state }: { state: KannaState }) {
                       </span>
                     ) : null}
                   </CommandItem>
+                  {projectChatsGroup ? (
+                    <CommandItem
+                      value="project-chats-copy-path"
+                      onSelect={() => {
+                        close()
+                        void state.handleCopyPath(projectChatsGroup.localPath)
+                      }}
+                    >
+                      <Copy className={ICON_CLASS} />
+                      <span>Copy Path</span>
+                      <span className="ml-auto max-w-[220px] shrink-0 truncate pl-3 text-xs text-muted-foreground">
+                        {formatPathWithTilde(projectChatsGroup.localPath)}
+                      </span>
+                    </CommandItem>
+                  ) : null}
                 </CommandGroup>
               ) : null}
               {projectChatSections ? (
