@@ -217,9 +217,9 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   const devboxUi = Boolean(options.directCloud) || process.env.KANNA_DEVBOX_UI === "1"
   const appSettings = new AppSettingsManager(path.join(store.dataDir, "settings.json"), { devbox: devboxUi })
   await appSettings.initialize()
-  // Which editors this machine has, for the "Open in…" menus. Deliberately not
-  // awaited: it shells out per editor, and the menus render fine (nothing
-  // greyed out) until the result lands.
+  // Which editors and terminals this machine has, for the "Open in…" menus.
+  // Deliberately not awaited: it shells out per app, and the menus render
+  // fine (nothing greyed out) until the result lands.
   void refreshInstalledEditors(appSettings)
   void refreshInstalledTerminals(appSettings)
   await keybindings.initialize()
@@ -304,9 +304,9 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
       validate: validateLlmProviderCredentials,
     },
     refreshDiscovery,
-    refreshInstalledEditors: () => {
+    refreshInstalledApps: () => {
       void refreshInstalledEditors(appSettings)
-  void refreshInstalledTerminals(appSettings)
+      void refreshInstalledTerminals(appSettings)
     },
     getDiscoveredProjects: () => discoveredProjects,
     machineDisplayName,
