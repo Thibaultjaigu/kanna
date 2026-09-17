@@ -280,6 +280,7 @@ export function deriveSidebarData(
           ...(pendingUserInputPreview ? { pendingUserInputPreview } : {}),
           ...(uncommittedWork ? { uncommittedWork: true } : {}),
           ...(chat.archivedAt ? { archivedAt: chat.archivedAt } : {}),
+          ...(chat.pinnedAt ? { pinnedAt: chat.pinnedAt } : {}),
           hasAutomation: false,
           canFork: canForkChat(chat, activeStatuses, drainingChatIds) || undefined,
         }

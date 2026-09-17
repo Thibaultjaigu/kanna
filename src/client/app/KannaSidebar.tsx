@@ -89,6 +89,7 @@ interface KannaSidebarProps {
   keybindings: KeybindingsSnapshot | null
   onRenameChat: (chat: SidebarChatRow) => void
   onShareChat: (chatId: string) => void
+  onToggleChatPin: (chat: SidebarChatRow) => void
   onArchiveChat: (chat: SidebarChatRow) => void
   onOpenArchivedChat: (chatId: string) => void
   onRestoreChat: (chatId: string) => void
@@ -123,6 +124,7 @@ function KannaSidebarImpl({
   keybindings,
   onRenameChat,
   onShareChat,
+  onToggleChatPin,
   onArchiveChat,
   onOpenArchivedChat,
   onRestoreChat,
@@ -347,12 +349,13 @@ function KannaSidebarImpl({
         onCopyPath={onCopyPath}
         onOpenExternalPath={onOpenExternalPath}
         onForkChat={onForkChat}
+        onToggleChatPin={onToggleChatPin}
         onArchiveChat={onArchiveChat}
         onRestoreChat={handleRestoreChat}
         onDeleteChat={onDeleteChat}
       />
     )
-  }, [activeChatId, editorLabel, nowMs, onArchiveChat, onCopyPath, onCreateChat, onDeleteChat, onForkChat, onOpenExternalPath, onRenameChat, handleRestoreChat, onShareChat, resolvedKeybindings, selectChat, showNumberJumpHints, threadByChatId, visibleIndexByChatId])
+  }, [activeChatId, editorLabel, nowMs, onToggleChatPin, onArchiveChat, onCopyPath, onCreateChat, onDeleteChat, onForkChat, onOpenExternalPath, onRenameChat, handleRestoreChat, onShareChat, resolvedKeybindings, selectChat, showNumberJumpHints, threadByChatId, visibleIndexByChatId])
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -794,6 +797,7 @@ function KannaSidebarImpl({
                 onRenameChat={onRenameChat}
                 onShareChat={onShareChat}
                 onForkChat={onForkChat}
+                onToggleChatPin={onToggleChatPin}
                 onArchiveChat={onArchiveChat}
                 onDeleteChat={onDeleteChat}
                 onCopyPath={onCopyPath}

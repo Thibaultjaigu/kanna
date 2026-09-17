@@ -996,6 +996,7 @@ export interface SidebarChatRow {
    * would order by the conversation's age instead of by when it was put away.
    */
   archivedAt?: number
+  pinnedAt?: number
   hasAutomation: boolean
   canFork?: boolean
 }

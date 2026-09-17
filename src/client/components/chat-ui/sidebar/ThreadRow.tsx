@@ -40,6 +40,7 @@ interface ThreadRowProps {
   onCopyPath: (localPath: string) => void
   onOpenExternalPath: (action: "open_finder" | "open_editor", localPath: string) => void
   onForkChat: (chat: SidebarThread["row"]) => void
+  onToggleChatPin?: (chat: SidebarThread["row"]) => void
   onArchiveChat: (chat: SidebarThread["row"]) => void
   onRestoreChat: (chatId: string) => void
   onDeleteChat: (chat: SidebarThread["row"]) => void
@@ -78,6 +79,7 @@ function ThreadRowImpl({
   onCopyPath,
   onOpenExternalPath,
   onForkChat,
+  onToggleChatPin,
   onArchiveChat,
   onRestoreChat,
   onDeleteChat,
@@ -137,6 +139,8 @@ function ThreadRowImpl({
     <ChatRowMenu
       canFork={thread.row.canFork}
       archived={archived}
+      pinned={Boolean(thread.row.pinnedAt)}
+      onTogglePin={!archived && onToggleChatPin ? () => onToggleChatPin(thread.row) : undefined}
       editorLabel={editorLabel}
       repoUrl={thread.projectLabel.repoUrl}
       onNewChat={() => onCreateChat(thread.projectId)}

@@ -276,6 +276,7 @@ function getReplayEventPriority(event: StoreEvent) {
     case "chat_files_touched":
     case "chat_last_message_at_set":
       return 9
+    case "chat_pin_set":
     case "chat_deleted":
     case "chat_archived":
     case "chat_unarchived":
@@ -748,6 +749,14 @@ export class EventStore {
         this.state.chatsById.set(chat.id, chat)
         break
       }
+      case "chat_pin_set": {
+        const chat = this.state.chatsById.get(event.chatId)
+        if (!chat) break
+        if (event.pinned) chat.pinnedAt = event.timestamp
+        else delete chat.pinnedAt
+        chat.updatedAt = event.timestamp
+        break
+      }
       case "chat_renamed": {
         const chat = this.state.chatsById.get(event.chatId)
         if (!chat) break
@@ -766,6 +775,7 @@ export class EventStore {
       case "chat_archived": {
         const chat = this.state.chatsById.get(event.chatId)
         if (!chat) break
+        delete chat.pinnedAt
         chat.archivedAt = event.timestamp
         chat.updatedAt = event.timestamp
         break
@@ -1489,6 +1499,19 @@ export class EventStore {
     await this.append(this.chatsLogPath, event)
   }
 
+  async setChatPinned(chatId: string, pinned: boolean) {
+    const chat = this.requireChat(chatId)
+    if (chat.deletedAt || chat.archivedAt || Boolean(chat.pinnedAt) === pinned) return
+    const event: ChatEvent = {
+      v: STORE_VERSION,
+      type: "chat_pin_set",
+      timestamp: Date.now(),
+      chatId,
+      pinned,
+    }
+    await this.append(this.chatsLogPath, event)
+  }
+
   async archiveChat(chatId: string) {
     this.requireChat(chatId)
     const event: ChatEvent = {
@@ -1526,7 +1549,7 @@ export class EventStore {
     const prunedChatIds: string[] = []
 
     for (const chat of this.state.chatsById.values()) {
-      if (chat.deletedAt || chat.archivedAt || protectedChatIds.has(chat.id)) continue
+      if (chat.deletedAt || chat.archivedAt || chat.pinnedAt || protectedChatIds.has(chat.id)) continue
       if (now - chat.createdAt < maxAgeMs) continue
       if (chat.hasMessages) continue
       // Peek without inserting into the transcript cache — the prune sweep
@@ -1596,7 +1619,7 @@ export class EventStore {
     const archivedChatIds: string[] = []
 
     for (const chat of this.state.chatsById.values()) {
-      if (chat.deletedAt || chat.archivedAt || protectedChatIds.has(chat.id)) continue
+      if (chat.deletedAt || chat.archivedAt || chat.pinnedAt || protectedChatIds.has(chat.id)) continue
       // Empty chats are the prune sweep's job (hard delete), not ours.
       if (!chat.hasMessages && chat.lastMessageAt == null) continue
       const lastActivityAt = chat.lastMessageAt ?? chat.createdAt
@@ -1638,7 +1661,7 @@ export class EventStore {
     const deletedChatIds: string[] = []
 
     for (const chat of this.state.chatsById.values()) {
-      if (chat.deletedAt || protectedChatIds.has(chat.id)) continue
+      if (chat.deletedAt || chat.pinnedAt || protectedChatIds.has(chat.id)) continue
       const lastActivityAt = chat.lastMessageAt ?? chat.createdAt
       if (reference - lastActivityAt < maxAgeMs) continue
 

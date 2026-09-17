@@ -1452,6 +1452,12 @@ export function createWsRouter({
           await broadcastChatAndSidebar(command.chatId)
           return
         }
+        case "chat.setPinned": {
+          await store.setChatPinned(command.chatId, command.pinned)
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
+          await broadcastFilteredSnapshots({ includeSidebar: true })
+          return
+        }
         case "chat.archive": {
           // Archiving a chat that never got a message is a hard delete — an
           // empty chat has nothing worth keeping in the Archived list.

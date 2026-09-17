@@ -231,6 +231,7 @@ export interface KannaState {
   handleRenameChat: (chat: SidebarChatRow) => Promise<void>
   handleRenameProject: (projectId: string, sidebarTitle: string | undefined, realTitle: string) => Promise<void>
   handleShareChat: (chatId?: string | null) => Promise<void>
+  handleToggleChatPin: (chat: SidebarChatRow) => Promise<void>
   handleArchiveChat: (chat: SidebarChatRow) => Promise<void>
   handleOpenArchivedChat: (chatId: string) => Promise<void>
   handleRestoreChat: (chatId: string) => Promise<void>
@@ -865,6 +866,15 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
   }, [activeChatId, dialog, navigate, socket])
 
+  const handleToggleChatPin = useCallback(async (chat: SidebarChatRow) => {
+    try {
+      await socket.command({ type: "chat.setPinned", chatId: chat.chatId, pinned: !chat.pinnedAt })
+      setCommandError(null)
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+    }
+  }, [socket])
+
   const handleArchiveChat = useCallback(async (chat: SidebarChatRow) => {
     try {
       await socket.command({ type: "chat.archive", chatId: chat.chatId })
@@ -1077,6 +1087,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     handleRenameChat,
     handleRenameProject,
     handleShareChat,
+    handleToggleChatPin,
     handleArchiveChat,
     handleOpenArchivedChat,
     handleRestoreChat,

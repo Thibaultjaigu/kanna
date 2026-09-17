@@ -360,6 +360,7 @@ export interface ThreadDateBucket {
 }
 
 export interface SidebarThreadSections {
+  pinned: SidebarThread[]
   inProgress: SidebarThread[]
   review: SidebarThread[]
   /** Chats bearing on the project's uncommitted work — sits above the buckets. */
@@ -483,16 +484,8 @@ export function computeThreadDateBuckets(threads: SidebarThread[], nowMs: number
 }
 
 /**
- * The New Sidebar's Chats tab: In Progress and Review lead (same membership
- * as the palette sections), then Relevant (bearing on the current diff), then
- * everything else bucketed by date, with archived chats trailing as their own
- * section. Same exclusions as computeThreadSections — empty new chats hidden,
- * nothing appears both up top and in a bucket.
- *
- * Relevant deliberately sits *below* Review and In Progress in that cascade: a
- * chat waiting on you or still running is asking for something now, which
- * outranks "this touches the current diff". So it only claims chats that would
- * otherwise have fallen through to a date bucket.
+ * Pinned chats keep their section across status changes. Other chats appear
+ * in In Progress, Relevant, or date buckets. Archived chats stay separate.
  */
 export function computeSidebarThreadSections(
   threads: SidebarThread[],
@@ -510,13 +503,18 @@ export function computeSidebarThreadSections(
    */
   pendingSends?: PendingSendTimes,
 ): SidebarThreadSections {
-  const review = getReviewThreads(threads, pendingSends)
+  // Pins stay in one section when status or activity changes.
+  const pinned = threads
+    .filter((thread) => !thread.archived && thread.row.pinnedAt != null)
+    .sort((left, right) => right.row.pinnedAt! - left.row.pinnedAt! || left.chatId.localeCompare(right.chatId))
+  const unpinned = threads.filter((thread) => thread.row.pinnedAt == null)
+  const review = getReviewThreads(unpinned, pendingSends)
   const inProgress = getInProgressThreads(
-    threads,
+    unpinned,
     new Set(review.map((thread) => thread.chatId)),
     pendingSends,
   )
-  const pinnedIds = new Set([...review, ...inProgress].map((thread) => thread.chatId))
+  const pinnedIds = new Set([...pinned, ...review, ...inProgress].map((thread) => thread.chatId))
   const relevant = getRelevantThreads(threads, pinnedIds, draftStartTimes)
   const excludeIds = new Set([...pinnedIds, ...relevant.map((thread) => thread.chatId)])
   const rest = threads.filter((thread) =>
@@ -524,6 +522,7 @@ export function computeSidebarThreadSections(
     && thread.row.lastMessageAt != null
     && !excludeIds.has(thread.chatId))
   return {
+    pinned,
     inProgress,
     review,
     relevant,

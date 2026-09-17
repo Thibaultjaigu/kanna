@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { Archive, Code, Copy, EyeOff, FolderOpen, Github, Pencil, PencilOff, RotateCcw, Split, SquarePen, Trash2, UserRoundPlus } from "lucide-react"
+import { Archive, Code, Copy, EyeOff, FolderOpen, Github, Pencil, PencilOff, Pin, PinOff, RotateCcw, Split, SquarePen, Trash2, UserRoundPlus } from "lucide-react"
 import { getRepoUrlLabel } from "../../../../shared/git-url"
 import {
   ContextMenu,
@@ -129,6 +129,8 @@ export function ProjectSectionMenu({
 export function ChatRowMenu({
   canFork,
   archived,
+  pinned,
+  onTogglePin,
   editorLabel,
   repoUrl,
   onNewChat,
@@ -144,6 +146,8 @@ export function ChatRowMenu({
   onDelete,
   children,
 }: {
+  pinned?: boolean
+  onTogglePin?: () => void
   canFork?: boolean
   /** Archived chats swap the Archive item for a leading Restore item. */
   archived?: boolean
@@ -181,6 +185,12 @@ export function ChatRowMenu({
       </ContextMenuTrigger>
       {!menuOpened ? null : (
         <ContextMenuContent>
+          {onTogglePin ? (
+            <ContextMenuItem onSelect={onTogglePin}>
+              {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+              <span className="text-xs font-medium">{pinned ? "Unpin" : "Pin"}</span>
+            </ContextMenuItem>
+          ) : null}
           {/* Draft leads: its own section, for something only this chat has and
               only while it has it — so when it's there, it's what you opened the
               menu for. */}

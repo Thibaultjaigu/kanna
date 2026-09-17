@@ -43,6 +43,7 @@ function sameChatRow(left: SidebarChatRow, right: SidebarChatRow): boolean {
     && left.lastAgentMessageAt === right.lastAgentMessageAt
     && left.pendingToolKind === right.pendingToolKind
     && left.uncommittedWork === right.uncommittedWork
+    && left.pinnedAt === right.pinnedAt
     && left.hasAutomation === right.hasAutomation
     && left.canFork === right.canFork
 }

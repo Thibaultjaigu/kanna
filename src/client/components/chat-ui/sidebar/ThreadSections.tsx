@@ -115,6 +115,7 @@ interface Props {
   onRenameChat: (chat: SidebarChatRow) => void
   onShareChat: (chatId: string) => void
   onForkChat: (chat: SidebarChatRow) => void
+  onToggleChatPin: (chat: SidebarChatRow) => void
   onArchiveChat: (chat: SidebarChatRow) => void
   onDeleteChat: (chat: SidebarChatRow) => void
   onCopyPath: (localPath: string) => void
@@ -122,13 +123,8 @@ interface Props {
 }
 
 /**
- * The New Sidebar's Chats tab: In Progress leads, then Relevant (Review folded
- * in — see `mergeRelevantThreads`), followed by collapsible date buckets —
- * Today, Yesterday, This Week, Last 30 Days — and a trailing Archived section.
- * Only the first date bucket starts expanded, so everything below the most
- * recent day of activity is folded away; empty sections never render. Rows reuse the palette's
- * compact thread row (no prompt preview) and the standard chat context menu;
- * bucket headers offer Archive All via "…" or right-click.
+ * Shows Pinned, In Progress, Relevant, date buckets, then Archived.
+ * Empty sections stay hidden. Date buckets offer Archive All.
  */
 function ThreadSectionsImpl({
   threads,
@@ -142,6 +138,7 @@ function ThreadSectionsImpl({
   onRenameChat,
   onShareChat,
   onForkChat,
+  onToggleChatPin,
   onArchiveChat,
   onDeleteChat,
   onCopyPath,
@@ -176,6 +173,7 @@ function ThreadSectionsImpl({
   }
 
   const pinnedGroups = [
+    { key: "pinned", heading: "Pinned", threads: sections.pinned },
     { key: "in-progress", heading: "In Progress", threads: sections.inProgress },
   ].filter((group) => group.threads.length > 0)
 
@@ -204,6 +202,7 @@ function ThreadSectionsImpl({
       onCopyPath={onCopyPath}
       onOpenExternalPath={onOpenExternalPath}
       onForkChat={onForkChat}
+      onToggleChatPin={onToggleChatPin}
       onArchiveChat={onArchiveChat}
       onRestoreChat={onRestoreChat}
       onDeleteChat={onDeleteChat}

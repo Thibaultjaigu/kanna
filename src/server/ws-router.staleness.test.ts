@@ -124,6 +124,7 @@ function createWorld(options?: { projectPath?: string }) {
     lastTurnOutcome: null,
     deletedAt: null as number | null,
     archivedAt: null as number | null,
+    pinnedAt: undefined as number | undefined,
     doneAt: null as number | null,
     lastMessageAt: undefined as number | undefined,
   })
@@ -223,6 +224,9 @@ function createWorld(options?: { projectPath?: string }) {
     },
     renameChat: async (chatId: string, title: string) => {
       requireChat(chatId).title = title
+    },
+    setChatPinned: async (chatId: string, pinned: boolean) => {
+      requireChat(chatId).pinnedAt = pinned ? Date.now() : undefined
     },
     archiveChat: async (chatId: string) => {
       requireChat(chatId).archivedAt = Date.now()
@@ -452,6 +456,19 @@ const CASES: StalenessCase[] = [
     name: "chat.rename",
     command: { type: "chat.rename", chatId: "chat-1", title: "Renamed Chat" },
     expectChanged: [TOPIC_IDS.sidebar, TOPIC_IDS.chat1],
+  },
+  {
+    name: "chat.setPinned",
+    command: { type: "chat.setPinned", chatId: "chat-1", pinned: true },
+    expectChanged: [TOPIC_IDS.sidebar],
+  },
+  {
+    name: "chat.unpin",
+    command: { type: "chat.setPinned", chatId: "chat-1", pinned: false },
+    prepare: (world) => {
+      world.state.chatsById.get("chat-1")!.pinnedAt = Date.now() - 1_000
+    },
+    expectChanged: [TOPIC_IDS.sidebar],
   },
   {
     name: "chat.archive",

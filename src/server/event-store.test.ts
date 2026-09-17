@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
@@ -1763,5 +1763,88 @@ describe("stateVersion", () => {
     const beforeBucketCross = store.stateVersion
     await store.appendMessage(chat.id, entry("assistant_text", at + 40_000, { text: "much later" }))
     expect(store.stateVersion).toBeGreaterThan(beforeBucketCross)
+  })
+})
+
+
+describe("chat pins", () => {
+  test("persists pin and unpin through replay and compaction", async () => {
+    const dataDir = await createTempDataDir()
+    const store = new EventStore(dataDir)
+    await store.initialize()
+    const project = await store.openProject("/tmp/project")
+    const chat = await store.createChat(project.id)
+    await store.setChatPinned(chat.id, true)
+    const pinnedAt = store.getChat(chat.id)!.pinnedAt
+    expect(pinnedAt).toBeNumber()
+    await store.setChatPinned(chat.id, true)
+    expect(store.getChat(chat.id)!.pinnedAt).toBe(pinnedAt)
+
+    const replayed = new EventStore(dataDir)
+    await replayed.initialize()
+    expect(replayed.getChat(chat.id)!.pinnedAt).toBe(pinnedAt)
+    await replayed.compact()
+    const compacted = new EventStore(dataDir)
+    await compacted.initialize()
+    expect(compacted.getChat(chat.id)!.pinnedAt).toBe(pinnedAt)
+    await compacted.setChatPinned(chat.id, false)
+    const unpinned = new EventStore(dataDir)
+    await unpinned.initialize()
+    expect(unpinned.getChat(chat.id)!.pinnedAt).toBeUndefined()
+  })
+
+  test("replay preserves repinning after archive within the same millisecond", async () => {
+    const dataDir = await createTempDataDir()
+    const store = new EventStore(dataDir)
+    await store.initialize()
+    const project = await store.openProject("/tmp/project")
+    const chat = await store.createChat(project.id)
+    const timestamp = Date.now()
+    const clock = spyOn(Date, "now").mockReturnValue(timestamp)
+    try {
+      await store.setChatPinned(chat.id, true)
+      await store.archiveChat(chat.id)
+      await store.unarchiveChat(chat.id)
+      await store.setChatPinned(chat.id, true)
+    } finally {
+      clock.mockRestore()
+    }
+    const replayed = new EventStore(dataDir)
+    await replayed.initialize()
+    expect(replayed.getChat(chat.id)!.pinnedAt).toBe(timestamp)
+    expect(replayed.getChat(chat.id)!.archivedAt).toBeUndefined()
+  })
+
+  test("cleanup preserves pinned chats, including empty chats", async () => {
+    const store = new EventStore(await createTempDataDir())
+    await store.initialize()
+    const project = await store.openProject("/tmp/project")
+    const empty = await store.createChat(project.id)
+    const old = await store.createChat(project.id)
+    await store.appendMessage(old.id, entry("user_prompt", old.createdAt + 1))
+    await store.setChatPinned(empty.id, true)
+    await store.setChatPinned(old.id, true)
+    const now = old.createdAt + 100 * 24 * 60 * 60 * 1000
+    const fresh = await store.createChat(project.id)
+    await store.appendMessage(fresh.id, entry("user_prompt", now))
+    expect(await store.pruneStaleEmptyChats({ now })).toEqual([])
+    expect(await store.autoArchiveStaleChats({ now })).toEqual([])
+    expect(await store.deleteStaleChats({ now })).toEqual([])
+    await store.setChatPinned(old.id, false)
+    expect(await store.autoArchiveStaleChats({ now })).toEqual([old.id])
+  })
+
+  test("manual archive clears the pin and restore keeps it unpinned", async () => {
+    const store = new EventStore(await createTempDataDir())
+    await store.initialize()
+    const project = await store.openProject("/tmp/project")
+    const chat = await store.createChat(project.id)
+    await store.setChatPinned(chat.id, true)
+    await store.archiveChat(chat.id)
+    expect(store.getChat(chat.id)!.pinnedAt).toBeUndefined()
+    await store.setChatPinned(chat.id, true)
+    expect(store.getChat(chat.id)!.pinnedAt).toBeUndefined()
+    await store.unarchiveChat(chat.id)
+    expect(store.getChat(chat.id)!.pinnedAt).toBeUndefined()
   })
 })

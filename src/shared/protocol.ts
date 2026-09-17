@@ -189,6 +189,7 @@ export type ClientCommand =
   | { type: "chat.create"; projectId: string }
   | { type: "chat.fork"; chatId: string }
   | { type: "chat.rename"; chatId: string; title: string }
+  | { type: "chat.setPinned"; chatId: string; pinned: boolean }
   | { type: "chat.archive"; chatId: string }
   | { type: "chat.unarchive"; chatId: string }
   | { type: "chat.delete"; chatId: string }

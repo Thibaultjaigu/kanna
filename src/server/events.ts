@@ -37,6 +37,7 @@ export interface ChatRecord {
   updatedAt: number
   deletedAt?: number
   archivedAt?: number
+  pinnedAt?: number
   /** Set when the user marks the chat done (e.g. drags it to the board's Done column). Cleared when a new turn starts. */
   doneAt?: number
   unread: boolean
@@ -217,6 +218,13 @@ export type ChatEvent =
        * every plain chat_created, including old logs.
        */
       lastTurnEndedAt?: number
+    }
+  | {
+      v: 2
+      type: "chat_pin_set"
+      timestamp: number
+      chatId: string
+      pinned: boolean
     }
   | {
       v: 2

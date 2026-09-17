@@ -343,6 +343,7 @@ function KannaLayout() {
       keybindings={state.keybindings}
       onRenameChat={handleSidebarRenameChat}
       onShareChat={handleSidebarShareChat}
+      onToggleChatPin={state.handleToggleChatPin}
       onArchiveChat={handleSidebarArchiveChat}
       onOpenArchivedChat={handleOpenArchivedChat}
       onRestoreChat={handleRestoreChat}
