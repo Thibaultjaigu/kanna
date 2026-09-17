@@ -1,5 +1,5 @@
 import { memo } from "react"
-import { ArrowLeft, Check, Flower, GitBranch, Globe, Loader2, MoreHorizontal, PanelLeft, PanelRight, Search, SquarePen, Terminal, UserRoundPlus } from "lucide-react"
+import { ArrowLeft, Check, Flower, GitBranch, Globe, Loader2, MoreHorizontal, PanelLeft, PanelRight, Search, Terminal, UserRoundPlus } from "lucide-react"
 import type { EditorOpenSettings, EditorPreset, OpenExternalAction, TerminalPreset } from "../../../shared/protocol"
 import { Button } from "../ui/button"
 import { CardHeader } from "../ui/card"
@@ -112,7 +112,6 @@ interface Props {
   sidebarCollapsed: boolean
   onOpenSidebar: () => void
   onExpandSidebar: () => void
-  onNewChat: () => void
   localPath?: string
   embeddedTerminalVisible?: boolean
   onToggleEmbeddedTerminal?: () => void
@@ -147,7 +146,6 @@ function ChatNavbarImpl({
   sidebarCollapsed,
   onOpenSidebar,
   onExpandSidebar,
-  onNewChat,
   localPath,
   embeddedTerminalVisible = false,
   onToggleEmbeddedTerminal,
@@ -237,15 +235,6 @@ function ChatNavbarImpl({
             title="Search"
           >
             <Search className="size-4 max-md:size-5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="max-md:h-[45px] max-md:w-[42px] hover:!border-border/0 hover:!bg-transparent"
-            onClick={onNewChat}
-            title="Compose"
-          >
-            <SquarePen className="size-4 max-md:size-5" />
           </Button>
         </div>
 
