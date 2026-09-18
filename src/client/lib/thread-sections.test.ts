@@ -794,7 +794,7 @@ describe("pinned sidebar chats", () => {
     ], [makeChatRow({ chatId: "archived", title: "Archived", pinnedAt: 5, lastMessageAt: NOW })])
     const threads = flattenSidebarThreads(data)
     const sections = computeSidebarThreadSections(threads, NOW, new Map([["empty", NOW]]), new Map([["review", NOW + 1]]))
-    expect(sections.pinned.map((thread) => thread.chatId)).toEqual(["empty", "relevant", "review", "running"])
+    expect(sections.pinned.map((thread) => thread.chatId)).toEqual(["running", "review", "relevant", "empty"])
     expect(sections.inProgress).toEqual([])
     expect(mergeRelevantThreads(sections)).toEqual([])
     expect(sections.buckets).toEqual([])
@@ -809,7 +809,7 @@ describe("pinned sidebar chats", () => {
     const sections = computeSidebarThreadSections(flattenSidebarThreads(focusSidebarData(data, focused)), NOW)
     expect(sections.pinned.map((thread) => thread.chatId)).toEqual(["chat-1"])
     const all = computeSidebarThreadSections(flattenSidebarThreads(focusSidebarData(data, null)), NOW)
-    expect(all.pinned.map((thread) => thread.chatId)).toEqual(["chat-4", "chat-1"])
+    expect(all.pinned.map((thread) => thread.chatId)).toEqual(["chat-1", "chat-4"])
   })
 
   test("pin changes survive snapshot comparison and unpin restores normal sections", () => {

@@ -506,7 +506,7 @@ export function computeSidebarThreadSections(
   // Pins stay in one section when status or activity changes.
   const pinned = threads
     .filter((thread) => !thread.archived && thread.row.pinnedAt != null)
-    .sort((left, right) => right.row.pinnedAt! - left.row.pinnedAt! || left.chatId.localeCompare(right.chatId))
+    .sort((left, right) => left.row.pinnedAt! - right.row.pinnedAt! || left.chatId.localeCompare(right.chatId))
   const unpinned = threads.filter((thread) => thread.row.pinnedAt == null)
   const review = getReviewThreads(unpinned, pendingSends)
   const inProgress = getInProgressThreads(
