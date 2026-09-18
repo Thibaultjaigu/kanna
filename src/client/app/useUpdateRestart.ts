@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import type { UpdateInstallResult, UpdateSnapshot } from "../../shared/types"
+import { isNightlyVersion } from "../../shared/types"
 import type { useAppDialog } from "../components/ui/app-dialog"
 import {
   UI_UPDATE_RELOAD_REQUEST_STORAGE_KEY,
@@ -74,6 +75,7 @@ export function useUpdateRestart(params: {
 }) {
   const { socket, connectionStatus, dialog, setCommandError } = params
   const [updateSnapshot, setUpdateSnapshot] = useState<UpdateSnapshot | null>(null)
+  const onNightly = isNightlyVersion(updateSnapshot?.currentVersion ?? "")
 
   useEffect(() => {
     return socket.subscribe<UpdateSnapshot>({ type: "update" }, (snapshot) => {
@@ -148,19 +150,26 @@ export function useUpdateRestart(params: {
   }, [connectionStatus])
 
   useEffect(() => {
-    function handleWindowFocus() {
-      if (!updateSnapshot?.lastCheckedAt) return
-      if (Date.now() - updateSnapshot.lastCheckedAt <= 60 * 60 * 1000) return
+    if (connectionStatus !== "connected") return
+    const checkInterval = (onNightly ? 5 : 60) * 60 * 1000
+    function checkIfDue() {
+      if (document.visibilityState !== "visible") return
+      if (updateSnapshot?.lastCheckedAt && Date.now() - updateSnapshot.lastCheckedAt < checkInterval) return
       void socket.command<UpdateSnapshot>({ type: "update.check" }).catch((error) => {
         setCommandError(error instanceof Error ? error.message : String(error))
       })
     }
 
-    window.addEventListener("focus", handleWindowFocus)
+    // The sidebar needs fresh nightly status even when Labs is closed.
+    const timer = onNightly ? window.setInterval(checkIfDue, checkInterval) : null
+    window.addEventListener("focus", checkIfDue)
+    document.addEventListener("visibilitychange", checkIfDue)
     return () => {
-      window.removeEventListener("focus", handleWindowFocus)
+      if (timer !== null) window.clearInterval(timer)
+      window.removeEventListener("focus", checkIfDue)
+      document.removeEventListener("visibilitychange", checkIfDue)
     }
-  }, [setCommandError, socket, updateSnapshot?.lastCheckedAt])
+  }, [connectionStatus, onNightly, setCommandError, socket, updateSnapshot?.lastCheckedAt])
 
   const handleCheckForUpdates = useCallback(async (options?: { force?: boolean }) => {
     try {

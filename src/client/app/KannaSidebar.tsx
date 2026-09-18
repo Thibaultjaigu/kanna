@@ -19,6 +19,7 @@ import { MachineSwitcher } from "./MachineSwitcher"
 import { getResolvedKeybindings } from "../lib/keybindings"
 import { useIsStandalone } from "../hooks/useIsStandalone"
 import type { ChatPreview, ChatTouchedFilesResult, KeybindingsSnapshot, SidebarChatRow, UpdateSnapshot } from "../../shared/types"
+import { isNightlyVersion } from "../../shared/types"
 import type { SocketStatus } from "./socket"
 import {
   getSidebarJumpTargetIndex,
@@ -528,7 +529,9 @@ function KannaSidebarImpl({
   const isConnecting = connectionStatus === "connecting" || !ready
   const statusLabel = isConnecting ? "Connecting" : connectionStatus === "connected" ? "Connected" : "Disconnected"
   const statusDotClass = connectionStatus === "connected" ? "bg-emerald-500" : "bg-amber-500"
-  const showUpdateButton = updateSnapshot?.updateAvailable === true
+  const showNightlyUpdate = isNightlyVersion(updateSnapshot?.currentVersion ?? "")
+    && updateSnapshot?.nightly?.status === "available"
+  const showUpdateButton = showNightlyUpdate || updateSnapshot?.updateAvailable === true
   const showDevBadge = updateSnapshot
     ? updateSnapshot.latestVersion === `${updateSnapshot.currentVersion}-dev`
     : false
@@ -658,13 +661,20 @@ function KannaSidebarImpl({
               <Button
                 variant="outline"
                 size="sm"
-                className="hidden md:inline-flex rounded-full !h-auto mr-1 py-0.5 px-2 bg-logo/20 hover:bg-logo text-logo border-logo/20 hover:text-foreground hover:border-logo/20 text-[11px] font-bold tracking-wider"
-                onClick={onOpenChangelog}
+                className={cn(
+                  "hidden md:inline-flex rounded-full !h-auto mr-1 py-0.5 px-2 text-[11px] font-bold tracking-wider",
+                  showNightlyUpdate
+                    ? "bg-blue-500/15 border-blue-500/25 text-blue-600 hover:bg-blue-500 hover:text-white hover:border-blue-500 dark:text-blue-400 dark:hover:text-white"
+                    : "bg-logo/20 hover:bg-logo text-logo border-logo/20 hover:text-foreground hover:border-logo/20"
+                )}
+                onClick={showNightlyUpdate ? () => navigate("/settings/labs#nightlyBuilds") : onOpenChangelog}
                 disabled={isUpdating}
-                title={updateSnapshot?.latestVersion ? `Update to ${updateSnapshot.latestVersion}` : "Update Kanna"}
+                title={showNightlyUpdate
+                  ? "New nightly available. Open Labs to build latest main."
+                  : updateSnapshot?.latestVersion ? `Update to ${updateSnapshot.latestVersion}` : "Update Kanna"}
               >
                 {isUpdating ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
-                UPDATE
+                {showNightlyUpdate ? "Nightly" : "UPDATE"}
               </Button>
             ) : null}
             {newSidebarEnabled ? (

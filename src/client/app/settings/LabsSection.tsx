@@ -63,45 +63,16 @@ export function LabsSection({
             : "Latest nightly not checked yet"
 
   useEffect(() => {
-    if (!onNightly) return
-    const check = () => {
-      if (document.visibilityState === "visible") void checkForUpdates()
-    }
-    check()
-    const timer = window.setInterval(check, 5 * 60 * 1000)
-    window.addEventListener("focus", check)
-    return () => {
-      window.clearInterval(timer)
-      window.removeEventListener("focus", check)
-    }
+    if (onNightly) void checkForUpdates()
   }, [checkForUpdates, onNightly])
 
   return (
     <>
       {error ? <SettingsErrorBanner message={error} /> : null}
       <div className="border-b border-border">
-        <SettingsRow def={SETTINGS_ROWS.recentChatsInSidebar} bordered={false}>
-          <SegmentedControl
-            value={recentChatsValue}
-            onValueChange={(value) => {
-              void handleRecentChatsChange(value)
-            }}
-            options={ENABLED_DISABLED_OPTIONS}
-            size="sm"
-          />
-        </SettingsRow>
-        <SettingsRow def={SETTINGS_ROWS.terminalWebglRenderer}>
-          <SegmentedControl
-            value={webglRendererValue}
-            onValueChange={(value) => {
-              void handleWebglRendererChange(value)
-            }}
-            options={ENABLED_DISABLED_OPTIONS}
-            size="sm"
-          />
-        </SettingsRow>
         <SettingsRow
           def={SETTINGS_ROWS.nightlyBuilds}
+          bordered={false}
           title={onNightly ? `Nightly build ${currentVersionLabel}` : undefined}
           description={
             onNightly
@@ -136,16 +107,38 @@ export function LabsSection({
                 Back to stable
               </SettingsHeaderButton>
             ) : null}
-            <SettingsHeaderButton
-              variant="outline"
-              onClick={() => {
-                void state.handleInstallNightly()
-              }}
-              disabled={isUpdating}
-            >
-              {isUpdating ? "Updating…" : "Build Latest"}
-            </SettingsHeaderButton>
+            {!onNightly || nightly?.status !== "up_to_date" ? (
+              <SettingsHeaderButton
+                variant="outline"
+                onClick={() => {
+                  void state.handleInstallNightly()
+                }}
+                disabled={isUpdating}
+              >
+                {isUpdating ? "Updating…" : "Build Latest"}
+              </SettingsHeaderButton>
+            ) : null}
           </div>
+        </SettingsRow>
+        <SettingsRow def={SETTINGS_ROWS.recentChatsInSidebar}>
+          <SegmentedControl
+            value={recentChatsValue}
+            onValueChange={(value) => {
+              void handleRecentChatsChange(value)
+            }}
+            options={ENABLED_DISABLED_OPTIONS}
+            size="sm"
+          />
+        </SettingsRow>
+        <SettingsRow def={SETTINGS_ROWS.terminalWebglRenderer}>
+          <SegmentedControl
+            value={webglRendererValue}
+            onValueChange={(value) => {
+              void handleWebglRendererChange(value)
+            }}
+            options={ENABLED_DISABLED_OPTIONS}
+            size="sm"
+          />
         </SettingsRow>
       </div>
     </>

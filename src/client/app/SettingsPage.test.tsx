@@ -87,7 +87,11 @@ describe("nightly status in Labs", () => {
     )
     expect(html).toContain(label)
     expect(html).toContain('role="status"')
-    expect(html).toContain("Build Latest")
+    if (nightly?.status === "up_to_date") {
+      expect(html).not.toContain("Build Latest")
+    } else {
+      expect(html).toContain("Build Latest")
+    }
     if (nightly?.status !== "up_to_date") expect(html).not.toContain("Latest nightly installed")
   })
 })
