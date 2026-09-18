@@ -43,7 +43,7 @@ import { PortTunnelManager } from "./port-tunnels"
 import { TerminalManager } from "./terminal-manager"
 import { UpdateManager } from "./update-manager"
 import type { UpdateInstallAttemptResult } from "./cli-runtime"
-import type { NightlyInstallResult } from "./nightly"
+import { fetchMainCommitSha, type NightlyInstallResult } from "./nightly"
 import { createWsRouter, type ClientState } from "./ws-router"
 import { instanceFingerprint } from "./instance"
 import { deleteProjectUpload, inferAttachmentContentType, inferProjectFileContentType, persistProjectUpload } from "./uploads"
@@ -235,6 +235,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     ? new UpdateManager({
       currentVersion: options.update.version,
       fetchLatestVersion: options.update.fetchLatestVersion,
+      fetchLatestNightlySha: fetchMainCommitSha,
       installVersion: options.update.installVersion,
       installNightly: options.update.installNightly,
       devMode: runtimeProfile === "dev",

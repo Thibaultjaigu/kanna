@@ -1,4 +1,5 @@
 import type { UpdateInstallResult, UpdateSnapshot } from "../shared/types"
+import { isNightlyVersion } from "../shared/types"
 import { PACKAGE_NAME } from "../shared/branding"
 import { compareVersions, type UpdateInstallAttemptResult } from "./cli-runtime"
 import type { NightlyInstallResult } from "./nightly"
@@ -8,6 +9,7 @@ const UPDATE_CACHE_TTL_MS = 5 * 60 * 1000
 export interface UpdateManagerDeps {
   currentVersion: string
   fetchLatestVersion: (packageName: string) => Promise<string>
+  fetchLatestNightlySha?: () => Promise<string>
   installVersion: (packageName: string, version: string) => UpdateInstallAttemptResult
   /** Build main from source and install it globally (see server/nightly.ts). */
   installNightly?: () => Promise<NightlyInstallResult>
@@ -69,6 +71,12 @@ export class UpdateManager {
       status: "checking",
       error: null,
       reloadRequestedAt: null,
+      nightly: isNightlyVersion(this.snapshot.currentVersion) ? {
+        status: "checking",
+        latestCommitSha: this.snapshot.nightly?.latestCommitSha ?? null,
+        lastCheckedAt: this.snapshot.nightly?.lastCheckedAt ?? null,
+        error: null,
+      } : undefined,
     })
 
     const checkPromise = this.runCheck()
@@ -323,9 +331,42 @@ export class UpdateManager {
     return { ok: true, action: "restart", errorCode: null, userTitle: null, userMessage: null }
   }
 
-  private async runCheck() {
+  private async checkNightly(): Promise<UpdateSnapshot["nightly"]> {
+    if (!isNightlyVersion(this.snapshot.currentVersion)) return undefined
     try {
-      const latestVersion = await this.deps.fetchLatestVersion(PACKAGE_NAME)
+      if (!this.deps.fetchLatestNightlySha) throw new Error("This server cannot check nightly builds.")
+      const installedSha = this.snapshot.currentVersion.match(/-nightly\.([a-f0-9]{7,40})$/i)?.[1].toLowerCase()
+      if (!installedSha) throw new Error("The installed nightly has no valid commit ID.")
+      const latestCommitSha = (await this.deps.fetchLatestNightlySha()).toLowerCase()
+      if (!/^[a-f0-9]{40}$/.test(latestCommitSha)) throw new Error("GitHub returned an invalid commit ID.")
+      return {
+        status: latestCommitSha.startsWith(installedSha) ? "up_to_date" : "available",
+        latestCommitSha,
+        lastCheckedAt: Date.now(),
+        error: null,
+      }
+    } catch (error) {
+      return {
+        status: "error",
+        latestCommitSha: null,
+        lastCheckedAt: Date.now(),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  private async runCheck() {
+    // A failure from either service must not discard the other service's result.
+    const [release, nightly] = await Promise.allSettled([
+      this.deps.fetchLatestVersion(PACKAGE_NAME),
+      this.checkNightly(),
+    ])
+    // A check can finish after an install starts. Keep the install's status.
+    if (this.snapshot.status === "updating" || this.snapshot.status === "restart_pending") return this.snapshot
+    const nightlySnapshot = nightly.status === "fulfilled" ? nightly.value : undefined
+    try {
+      if (release.status === "rejected") throw release.reason
+      const latestVersion = release.value
       const updateAvailable = compareVersions(this.snapshot.currentVersion, latestVersion) < 0
       const nextSnapshot: UpdateSnapshot = {
         ...this.snapshot,
@@ -335,6 +376,7 @@ export class UpdateManager {
         lastCheckedAt: Date.now(),
         error: null,
         reloadRequestedAt: null,
+        nightly: nightlySnapshot,
       }
       this.setSnapshot(nextSnapshot)
       this.deps.trackEvent?.("update_checked", {
@@ -348,6 +390,7 @@ export class UpdateManager {
         lastCheckedAt: Date.now(),
         error: error instanceof Error ? error.message : String(error),
         reloadRequestedAt: null,
+        nightly: nightlySnapshot,
       }
       this.setSnapshot(nextSnapshot)
       this.deps.trackEvent?.("update_failed", {

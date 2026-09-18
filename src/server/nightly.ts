@@ -44,6 +44,8 @@ export function nightlyVersion(baseVersion: string, sha: string): string {
 
 export async function fetchMainCommitSha(fetchImpl: typeof fetch = fetch): Promise<string> {
   const response = await fetchImpl(`https://api.github.com/repos/${NIGHTLY_REPO}/commits/main`, {
+    signal: AbortSignal.timeout(10_000),
+    cache: "no-store",
     headers: {
       Accept: "application/vnd.github.sha",
       "User-Agent": "kanna",
@@ -56,7 +58,7 @@ export async function fetchMainCommitSha(fetchImpl: typeof fetch = fetch): Promi
   if (!/^[0-9a-f]{40}$/i.test(sha)) {
     throw new Error("GitHub did not return a commit sha for main")
   }
-  return sha
+  return sha.toLowerCase()
 }
 
 function runCommandWithTimeout(command: string, args: string[], cwd: string, env?: Record<string, string>): Promise<RunCommandResult> {

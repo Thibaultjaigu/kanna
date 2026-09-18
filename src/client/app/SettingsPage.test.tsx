@@ -17,6 +17,7 @@ import {
 } from "./SettingsPage"
 import { SettingsHeaderButton } from "../components/ui/settings-header-button"
 import type { UpdateSnapshot } from "../../shared/types"
+import { LabsSection } from "./settings/LabsSection"
 
 const SAMPLE_RELEASES = [
   {
@@ -58,6 +59,38 @@ function createUpdateSnapshot(overrides: Partial<UpdateSnapshot> = {}): UpdateSn
     ...overrides,
   }
 }
+
+describe("nightly status in Labs", () => {
+  const cases: Array<[UpdateSnapshot["nightly"], string]> = [
+    [undefined, "Latest nightly not checked yet"],
+    [{ status: "checking", latestCommitSha: null, lastCheckedAt: null, error: null }, "Checking latest nightly…"],
+    [{ status: "up_to_date", latestCommitSha: "abc1234", lastCheckedAt: 123, error: null }, "Latest nightly installed"],
+    [{ status: "available", latestCommitSha: "def5678", lastCheckedAt: 123, error: null }, "New nightly available"],
+    [{ status: "error", latestCommitSha: null, lastCheckedAt: 123, error: "GitHub unavailable" }, "Could not check latest nightly"],
+  ]
+
+  test.each(cases)("uses the nightly result even when npm is up to date: %j", (nightly, label) => {
+    const html = renderToStaticMarkup(
+      <LabsSection
+        appVersion="0.69.0"
+        state={{
+          appSettings: null,
+          updateSnapshot: createUpdateSnapshot({
+            currentVersion: "0.69.0-nightly.abc1234", status: "up_to_date", updateAvailable: false, nightly,
+          }),
+          handleWriteAppSettings: async () => {},
+          handleInstallNightly: async () => {},
+          handleInstallStable: async () => {},
+          handleCheckForUpdates: async () => {},
+        }}
+      />
+    )
+    expect(html).toContain(label)
+    expect(html).toContain('role="status"')
+    expect(html).toContain("Build Latest")
+    if (nightly?.status !== "up_to_date") expect(html).not.toContain("Latest nightly installed")
+  })
+})
 
 describe("fetchGithubReleases", () => {
   test("filters draft releases and sends the GitHub accept header", async () => {

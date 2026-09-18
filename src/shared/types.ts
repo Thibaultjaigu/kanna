@@ -1474,6 +1474,13 @@ export interface UpdateSnapshot {
   error: string | null
   installAction: "restart" | "reload"
   reloadRequestedAt: number | null
+  /** GitHub commit check, separate from the npm release check. */
+  nightly?: {
+    status: "checking" | "up_to_date" | "available" | "error"
+    latestCommitSha: string | null
+    lastCheckedAt: number | null
+    error: string | null
+  }
 }
 
 export type UpdateInstallErrorCode =

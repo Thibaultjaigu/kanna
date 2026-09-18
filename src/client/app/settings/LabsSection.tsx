@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { isNightlyVersion } from "../../../shared/types"
 import { SegmentedControl } from "../../components/ui/segmented-control"
 import { SettingsHeaderButton } from "../../components/ui/settings-header-button"
@@ -17,6 +17,7 @@ export function LabsSection({
     | "updateSnapshot"
     | "handleInstallNightly"
     | "handleInstallStable"
+    | "handleCheckForUpdates"
   >
   appVersion: string
 }) {
@@ -47,6 +48,33 @@ export function LabsSection({
   const currentVersionLabel = updateSnapshot?.currentVersion ?? appVersion
   const isUpdating = updateSnapshot?.status === "updating" || updateSnapshot?.status === "restart_pending"
   const onNightly = isNightlyVersion(currentVersionLabel)
+  const nightly = updateSnapshot?.nightly
+  const checkForUpdates = state.handleCheckForUpdates
+  const nightlyStatusLabel = isUpdating
+    ? "Update in progress…"
+    : nightly?.status === "up_to_date"
+      ? "Latest nightly installed"
+      : nightly?.status === "available"
+        ? "New nightly available"
+        : nightly?.status === "checking"
+          ? "Checking latest nightly…"
+          : nightly?.status === "error"
+            ? "Could not check latest nightly"
+            : "Latest nightly not checked yet"
+
+  useEffect(() => {
+    if (!onNightly) return
+    const check = () => {
+      if (document.visibilityState === "visible") void checkForUpdates()
+    }
+    check()
+    const timer = window.setInterval(check, 5 * 60 * 1000)
+    window.addEventListener("focus", check)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener("focus", check)
+    }
+  }, [checkForUpdates, onNightly])
 
   return (
     <>
@@ -77,11 +105,26 @@ export function LabsSection({
           title={onNightly ? `Nightly build ${currentVersionLabel}` : undefined}
           description={
             onNightly
-              ? "You're running a build of main. The next published release returns you to stable automatically."
+              ? (
+                <div className="flex flex-col gap-1">
+                  <p role="status" className="font-medium text-foreground">{nightlyStatusLabel}</p>
+                  {nightly?.latestCommitSha ? <p>Latest main: <code>{nightly.latestCommitSha.slice(0, 7)}</code></p> : null}
+                  {nightly?.lastCheckedAt ? <p>Last checked {new Date(nightly.lastCheckedAt).toLocaleTimeString()}</p> : null}
+                  {nightly?.error ? <p>{nightly.error}</p> : null}
+                </div>
+              )
               : undefined
           }
         >
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {onNightly ? (
+              <SettingsHeaderButton
+                onClick={() => { void checkForUpdates({ force: true }) }}
+                disabled={isUpdating || nightly?.status === "checking"}
+              >
+                Check again
+              </SettingsHeaderButton>
+            ) : null}
             {onNightly ? (
               <SettingsHeaderButton
                 variant="outline"
@@ -100,11 +143,7 @@ export function LabsSection({
               }}
               disabled={isUpdating}
             >
-              {isUpdating
-                ? "Updating…"
-                : onNightly
-                  ? "Rebuild latest main"
-                  : "Update to nightly"}
+              {isUpdating ? "Updating…" : "Build Latest"}
             </SettingsHeaderButton>
           </div>
         </SettingsRow>

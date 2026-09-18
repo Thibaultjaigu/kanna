@@ -1,5 +1,111 @@
 import { describe, expect, test } from "bun:test"
-import { UpdateManager } from "./update-manager"
+import { UpdateManager, type UpdateManagerDeps } from "./update-manager"
+
+const NIGHTLY_SHA = `abc1234${"0".repeat(33)}`
+
+function nightlyManager(overrides: Partial<UpdateManagerDeps> = {}) {
+  return new UpdateManager({
+    currentVersion: "0.69.0-nightly.abc1234",
+    fetchLatestVersion: async () => "0.69.0",
+    fetchLatestNightlySha: async () => NIGHTLY_SHA,
+    installVersion: () => ({ ok: true, errorCode: null, userTitle: null, userMessage: null }),
+    ...overrides,
+  })
+}
+
+describe("nightly update checks", () => {
+  test.each([
+    [NIGHTLY_SHA, "up_to_date"],
+    [`def5678${"0".repeat(33)}`, "available"],
+  ])("compares the installed commit with %s", async (latestSha, status) => {
+    const manager = nightlyManager({ fetchLatestNightlySha: async () => latestSha })
+    const snapshot = await manager.checkForUpdates()
+    expect(snapshot.nightly).toMatchObject({ status, latestCommitSha: latestSha, error: null })
+    expect(snapshot.nightly?.lastCheckedAt).toBeNumber()
+    expect(snapshot.status).toBe("up_to_date")
+    expect(snapshot.updateAvailable).toBe(false)
+  })
+
+  test("shows checking while GitHub responds and shares concurrent checks", async () => {
+    let resolveSha!: (sha: string) => void
+    let calls = 0
+    const response = new Promise<string>((resolve) => { resolveSha = resolve })
+    const manager = nightlyManager({ fetchLatestNightlySha: () => { calls += 1; return response } })
+    const first = manager.checkForUpdates()
+    const second = manager.checkForUpdates({ force: true })
+    expect(manager.getSnapshot().nightly?.status).toBe("checking")
+    resolveSha(NIGHTLY_SHA)
+    await Promise.all([first, second])
+    expect(calls).toBe(1)
+    expect(manager.getSnapshot().nightly?.status).toBe("up_to_date")
+  })
+
+  test("caches GitHub checks and lets Check again detect a new commit", async () => {
+    let calls = 0
+    const manager = nightlyManager({ fetchLatestNightlySha: async () => {
+      calls += 1
+      return calls === 1 ? NIGHTLY_SHA : `def5678${"0".repeat(33)}`
+    } })
+    await manager.checkForUpdates()
+    await manager.checkForUpdates()
+    expect(calls).toBe(1)
+    await manager.checkForUpdates({ force: true })
+    expect(calls).toBe(2)
+    expect(manager.getSnapshot().nightly?.status).toBe("available")
+  })
+
+  test("clears the previous result if GitHub becomes unavailable", async () => {
+    let fail = false
+    const manager = nightlyManager({ fetchLatestNightlySha: async () => {
+      if (fail) throw new Error("GitHub returned 403")
+      return NIGHTLY_SHA
+    } })
+    await manager.checkForUpdates()
+    fail = true
+    const snapshot = await manager.checkForUpdates({ force: true })
+    expect(snapshot.nightly).toMatchObject({ status: "error", latestCommitSha: null, error: "GitHub returned 403" })
+    expect(snapshot.status).toBe("up_to_date")
+  })
+
+  test("keeps the nightly result if npm fails", async () => {
+    const manager = nightlyManager({ fetchLatestVersion: async () => { throw new Error("npm unavailable") } })
+    const snapshot = await manager.checkForUpdates()
+    expect(snapshot.nightly?.status).toBe("up_to_date")
+    expect(snapshot.status).toBe("error")
+  })
+
+  test("does not query GitHub for stable installs", async () => {
+    let calls = 0
+    const manager = nightlyManager({
+      currentVersion: "0.69.0",
+      fetchLatestNightlySha: async () => { calls += 1; return NIGHTLY_SHA },
+    })
+    const snapshot = await manager.checkForUpdates()
+    expect(calls).toBe(0)
+    expect(snapshot.nightly).toBeUndefined()
+  })
+
+  test("reports unknown status when the installed commit is invalid", async () => {
+    const snapshot = await nightlyManager({ currentVersion: "0.69.0-nightly.invalid" }).checkForUpdates()
+    expect(snapshot.nightly?.status).toBe("error")
+  })
+
+  test("does not replace restart status when an earlier check finishes", async () => {
+    let resolveSha!: (sha: string) => void
+    const manager = nightlyManager({
+      fetchLatestNightlySha: () => new Promise((resolve) => { resolveSha = resolve }),
+      installNightly: async () => ({
+        ok: true, errorCode: null, userTitle: null, userMessage: null, version: "0.69.0-nightly.def5678",
+      }),
+    })
+    const checking = manager.checkForUpdates()
+    await manager.installNightly()
+    resolveSha(NIGHTLY_SHA)
+    await checking
+    expect(manager.getSnapshot().status).toBe("restart_pending")
+    expect(manager.getSnapshot().currentVersion).toBe("0.69.0-nightly.def5678")
+  })
+})
 
 describe("UpdateManager", () => {
   test("tracks update lifecycle events", async () => {
