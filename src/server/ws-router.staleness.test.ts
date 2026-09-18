@@ -430,7 +430,7 @@ const CASES: StalenessCase[] = [
   {
     name: "project.rename",
     command: { type: "project.rename", projectId: "project-1", title: "Renamed Project" },
-    expectChanged: [TOPIC_IDS.sidebar],
+    expectChanged: [TOPIC_IDS.sidebar, TOPIC_IDS.localProjects],
   },
   {
     name: "project.remove",

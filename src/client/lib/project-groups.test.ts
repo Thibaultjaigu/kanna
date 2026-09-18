@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { LocalProjectSummary } from "../../shared/types"
-import { filterProjects, groupByRecency, groupProjectsByRecency } from "./project-groups"
+import { filterProjects, getLocalProjectTitle, groupByRecency, groupProjectsByRecency } from "./project-groups"
 
 const DAY_MS = 24 * 60 * 60 * 1_000
 const NOW_MS = Date.parse("2026-07-17T12:00:00.000Z")
@@ -16,6 +16,13 @@ function project(name: string, ageInDays?: number): LocalProjectSummary {
 }
 
 describe("local project recency groups", () => {
+  test("finds a renamed project by its display name and original path", () => {
+    const renamed = { ...project("original-folder", 1), sidebarTitle: "Display Name" }
+    expect(getLocalProjectTitle(renamed)).toBe("Display Name")
+    expect(filterProjects([renamed], "display")).toEqual([renamed])
+    expect(filterProjects([renamed], "original-folder")).toEqual([renamed])
+  })
+
   test("searches project titles and paths case-insensitively", () => {
     const projects = [
       project("Kanna", 1),

@@ -6,6 +6,8 @@ import type { AppSettingsSnapshot, KeybindingsSnapshot, LlmProviderSnapshot, Upd
 import { PROTOCOL_VERSION } from "../shared/types"
 import { findTranscriptWindowStart } from "../shared/transcript-window"
 import { createEmptyState } from "./events"
+import { EventStore } from "./event-store"
+import { deriveLocalProjectsSnapshot } from "./read-models"
 import { SERVER_PROVIDERS, applyCodexModels, resetServerProvidersForTests } from "./provider-catalog"
 import {
   assertSafeSkillId,
@@ -400,6 +402,90 @@ function createTestRouter(overrides: Partial<CreateWsRouterArgs> = {}) {
 }
 
 describe("ws-router", () => {
+  test("renames a discovered project by path and updates all project lists", async () => {
+    const projectPath = await mkdtemp(path.join(tmpdir(), "kanna-rename-project-"))
+    try {
+      const store = new EventStore(path.join(projectPath, "data"))
+      await store.initialize()
+      const discovered = [{ localPath: projectPath, title: "Project", modifiedAt: 1 }]
+      const router = createTestRouter({ store, getDiscoveredProjects: () => discovered })
+      const ws = new FakeWebSocket()
+      router.handleOpen(ws as never)
+      ws.data.subscriptions.set("projects", { type: "local-projects" })
+
+      await router.handleMessage(ws as never, JSON.stringify({
+        v: PROTOCOL_VERSION,
+        type: "command",
+        id: "rename-project",
+        command: { type: "project.rename", localPath: projectPath, title: "Display Name" },
+      }))
+
+      const projects = deriveLocalProjectsSnapshot(store.state, discovered, "Local Machine").projects
+      expect(projects).toHaveLength(1)
+      expect(projects[0]).toMatchObject({ localPath: projectPath, sidebarTitle: "Display Name", chatCount: 0 })
+      expect(store.state.chatsById.size).toBe(0)
+      expect(ws.sent).toContainEqual({
+        v: PROTOCOL_VERSION,
+        type: "snapshot",
+        id: "projects",
+        snapshot: {
+          type: "local-projects",
+          data: { machine: { id: "local", displayName: "Local Machine", platform: process.platform }, projects },
+        },
+      })
+      expect((await stat(projectPath)).isDirectory()).toBe(true)
+    } finally {
+      await rm(projectPath, { recursive: true, force: true })
+    }
+  })
+
+  test.each(["saved", "discovered"])("hides a %s project by path without creating a chat", async (source) => {
+    const projectPath = await mkdtemp(path.join(tmpdir(), "kanna-hide-project-"))
+    try {
+      const dataDir = path.join(projectPath, "data")
+      const store = new EventStore(dataDir)
+      await store.initialize()
+      const savedProject = source === "saved" ? await store.openProject(projectPath) : null
+      const discovered = [{ localPath: projectPath, title: "Project", modifiedAt: 1 }]
+      const router = createTestRouter({ store, getDiscoveredProjects: () => discovered })
+      const ws = new FakeWebSocket()
+      router.handleOpen(ws as never)
+      ws.data.subscriptions.set("projects", { type: "local-projects" })
+
+      await router.handleMessage(ws as never, JSON.stringify({
+        v: PROTOCOL_VERSION,
+        type: "command",
+        id: "hide-project",
+        command: { type: "project.remove", localPath: `${projectPath}/` },
+      }))
+
+      const hidden = [...store.state.projectsById.values()][0]!
+      expect(hidden.localPath).toBe(projectPath)
+      expect(hidden.deletedAt).toBeNumber()
+      if (savedProject) expect(hidden.id).toBe(savedProject.id)
+      expect(store.state.chatsById.size).toBe(0)
+      expect(ws.sent).toContainEqual({
+        v: PROTOCOL_VERSION, type: "ack", id: "hide-project", result: { projectId: hidden.id },
+      })
+      expect(ws.sent).toContainEqual({
+        v: PROTOCOL_VERSION,
+        type: "snapshot",
+        id: "projects",
+        snapshot: {
+          type: "local-projects",
+          data: { machine: { id: "local", displayName: "Local Machine", platform: process.platform }, projects: [] },
+        },
+      })
+
+      const reloaded = new EventStore(dataDir)
+      await reloaded.initialize()
+      expect(deriveLocalProjectsSnapshot(reloaded.state, discovered, "Machine").projects).toEqual([])
+      expect((await stat(projectPath)).isDirectory()).toBe(true)
+    } finally {
+      await rm(projectPath, { recursive: true, force: true })
+    }
+  })
+
   test("acks system.ping without broadcasting snapshots", async () => {
     const router = createTestRouter()
     const ws = new FakeWebSocket()

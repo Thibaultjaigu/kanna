@@ -353,15 +353,23 @@ export function isCodexScratchWorkspacePath(localPath: string) {
   )
 }
 
+// The home page and command palette share this list, including its visibility rules.
 export function deriveLocalProjectsSnapshot(
   state: StoreState,
   discoveredProjects: Array<{ localPath: string; title: string; modifiedAt: number }>,
   machineName: string
 ): LocalProjectsSnapshot {
   const projects = new Map<string, LocalProjectsSnapshot["projects"][number]>()
+  const hiddenPaths = new Set(
+    [...state.projectsById.values()]
+      .filter((project) => project.deletedAt)
+      .map((project) => resolveLocalPath(project.localPath))
+  )
 
   for (const project of discoveredProjects) {
     const normalizedPath = resolveLocalPath(project.localPath)
+    // Discovery must not restore projects that the user hid.
+    if (hiddenPaths.has(normalizedPath)) continue
     if (hasHiddenPathSegment(normalizedPath)) continue
     if (isCodexScratchWorkspacePath(normalizedPath)) continue
     projects.set(normalizedPath, {
@@ -385,6 +393,7 @@ export function deriveLocalProjectsSnapshot(
       localPath: project.localPath,
       title: project.title,
       source: "saved",
+      ...(project.sidebarTitle ? { sidebarTitle: project.sidebarTitle } : {}),
       lastOpenedAt,
       folderModifiedAt: getFolderModifiedAt(project.localPath),
       chatCount: chats.length,

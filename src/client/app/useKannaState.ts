@@ -229,7 +229,7 @@ export interface KannaState {
   handleCancel: () => Promise<void>
   handleStopDraining: () => Promise<void>
   handleRenameChat: (chat: SidebarChatRow) => Promise<void>
-  handleRenameProject: (projectId: string, sidebarTitle: string | undefined, realTitle: string) => Promise<void>
+  handleRenameProject: (target: string | { localPath: string }, sidebarTitle: string | undefined, realTitle: string) => Promise<void>
   handleShareChat: (chatId?: string | null) => Promise<void>
   handleToggleChatPin: (chat: SidebarChatRow) => Promise<void>
   handleArchiveChat: (chat: SidebarChatRow) => Promise<void>
@@ -237,7 +237,7 @@ export interface KannaState {
   handleRestoreChat: (chatId: string) => Promise<void>
   handleDeleteChat: (chat: SidebarChatRow) => Promise<void>
   handleSetupGit: (chatId: string) => Promise<void>
-  handleHideProject: (projectId: string) => Promise<void>
+  handleHideProject: (target: string | { localPath: string }) => Promise<void>
   handleReorderProjectGroups: (projectIds: string[]) => Promise<void>
   handleCopyPath: (localPath: string) => Promise<void>
   handleOpenExternal: (action: OpenExternalAction, editor?: EditorOpenSettings, terminal?: TerminalPreset) => Promise<void>
@@ -944,9 +944,12 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
   }, [dialog, socket])
 
-  const handleHideProject = useCallback(async (projectId: string) => {
+  const handleHideProject = useCallback(async (target: string | { localPath: string }) => {
     try {
-      await socket.command({ type: "project.remove", projectId })
+      const { projectId } = await socket.command<{ projectId: string }>({
+        type: "project.remove",
+        ...(typeof target === "string" ? { projectId: target } : target),
+      })
       useTerminalLayoutStore.getState().clearProject(projectId)
       useRightSidebarStore.getState().clearProject(projectId)
       if (runtime?.projectId === projectId) {

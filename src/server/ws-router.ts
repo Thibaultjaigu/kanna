@@ -1382,9 +1382,12 @@ export function createWsRouter({
           return
         }
         case "project.rename": {
-          await store.renameProjectSidebarTitle(command.projectId, command.title)
+          const projectId = "projectId" in command
+            ? command.projectId
+            : (await store.openProject(command.localPath)).id
+          await store.renameProjectSidebarTitle(projectId, command.title)
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
-          await broadcastFilteredSnapshots({ includeSidebar: true })
+          await broadcastFilteredSnapshots({ includeSidebar: true, includeLocalProjects: true })
           return
         }
         case "project.clone": {
@@ -1397,11 +1400,14 @@ export function createWsRouter({
           return
         }
         case "project.remove": {
-          await store.removeProject(command.projectId)
-          send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
+          // Discovered folders need a saved record so Hide survives discovery and restarts.
+          const projectId = "projectId" in command
+            ? command.projectId
+            : (await store.openProject(command.localPath)).id
+          await store.removeProject(projectId)
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { projectId } })
           resolvedAnalytics.track("project_removed")
-          // Removing a project tombstones its chats too, so subscribers of any
-          // topic may need fresh state.
+          // Hidden projects also hide their chats, so refresh every subscription.
           await broadcastSnapshots()
           return
         }

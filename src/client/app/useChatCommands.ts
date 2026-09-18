@@ -69,10 +69,10 @@ export function useChatCommands(params: {
     await wrapCommand({ type: "chat.rename", chatId: chat.chatId, title })
   }, [dialog, wrapCommand])
 
-  const handleRenameProject = useCallback(async (projectId: string, sidebarTitle: string | undefined, realTitle: string) => {
+  const handleRenameProject = useCallback(async (target: string | { localPath: string }, sidebarTitle: string | undefined, realTitle: string) => {
     const title = await dialog.prompt({
       title: "Rename Project",
-      description: "This only changes the sidebar name. The folder path on disk stays the same.",
+      description: "This changes the display name. The folder path on disk stays the same.",
       initialValue: sidebarTitle ?? "",
       placeholder: realTitle,
       allowEmpty: true,
@@ -81,7 +81,7 @@ export function useChatCommands(params: {
       confirmLabel: "Rename",
     })
     if (title === null || title === (sidebarTitle ?? "")) return
-    await wrapCommand({ type: "project.rename", projectId, title })
+    await wrapCommand({ type: "project.rename", ...(typeof target === "string" ? { projectId: target } : target), title })
   }, [dialog, wrapCommand])
 
   const handleAskUserQuestion = useCallback(async (

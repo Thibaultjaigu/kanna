@@ -1,4 +1,4 @@
-import { useMemo, useState, type ComponentType, type ReactNode } from "react"
+import { forwardRef, useMemo, useState, type ComponentPropsWithoutRef, type ComponentType, type ReactNode } from "react"
 import {
   ArrowLeftRight,
   ChevronRight,
@@ -11,11 +11,10 @@ import {
   Terminal,
 } from "lucide-react"
 import { APP_NAME, getCliInvocation, SDK_CLIENT_APP } from "../../shared/branding"
-import type { LocalProjectsSnapshot } from "../../shared/types"
+import type { LocalProjectSummary, LocalProjectsSnapshot } from "../../shared/types"
 import type { SocketStatus } from "../app/socket"
 import { PageHeader } from "../app/PageHeader"
-import { getPathBasename } from "../lib/formatters"
-import { filterProjects, groupProjectsByRecency } from "../lib/project-groups"
+import { filterProjects, getLocalProjectTitle, groupProjectsByRecency } from "../lib/project-groups"
 import { cn } from "../lib/utils"
 import { openCommandPalette } from "./command-palette/CommandPalette"
 import { Button } from "./ui/button"
@@ -30,6 +29,7 @@ interface LocalDevProps {
   startingLocalPath: string | null
   commandError: string | null
   onOpenProject: (localPath: string) => Promise<void>
+  renderProjectMenu: (project: LocalProjectSummary, card: ReactNode) => ReactNode
   /** Setup entry card (renders itself only when onboarding is unfinished). */
   providerCards?: ReactNode
   /** Recent GitHub repos section (renders itself only when `gh` is signed in). */
@@ -112,19 +112,23 @@ function Step({
   )
 }
 
-function ProjectCard({
+const ProjectCard = forwardRef<HTMLButtonElement, ComponentPropsWithoutRef<"button"> & {
+  localPath: string
+  title: string
+  loading: boolean
+}>(function ProjectCard({
   localPath,
+  title,
   loading,
   onClick,
-}: {
-  localPath: string
-  loading: boolean
-  onClick: () => void
-}) {
+  ...buttonProps
+}, ref) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <button
+          {...buttonProps}
+          ref={ref}
           className={cn(
             "border border-border hover:border-primary/30 group rounded-lg bg-card px-4 py-3 flex items-center gap-3 w-full text-left hover:bg-muted/50 transition-colors",
             loading && "opacity-50 cursor-not-allowed"
@@ -134,7 +138,7 @@ function ProjectCard({
         >
           <Folder className="h-4 w-4 text-muted-foreground flex-shrink-0" />
           <span className="font-medium text-foreground truncate flex-1">
-            {getPathBasename(localPath)}
+            {title}
           </span>
           {loading ? (
             <Loader2 className="h-4 w-4 text-muted-foreground group-hover:text-primary animate-spin flex-shrink-0" />
@@ -148,7 +152,7 @@ function ProjectCard({
       </TooltipContent>
     </Tooltip>
   )
-}
+})
 
 export function LocalDev({
   connectionStatus,
@@ -157,6 +161,7 @@ export function LocalDev({
   startingLocalPath,
   commandError,
   onOpenProject,
+  renderProjectMenu,
   providerCards,
   githubSection,
 }: LocalDevProps) {
@@ -287,10 +292,11 @@ export function LocalDev({
                         {group.title}
                       </h3>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 3xl:grid-cols-5">
-                        {group.projects.map((project) => (
+                        {group.projects.map((project) => renderProjectMenu(project,
                           <ProjectCard
                             key={project.localPath}
                             localPath={project.localPath}
+                            title={getLocalProjectTitle(project)}
                             loading={startingLocalPath === project.localPath}
                             onClick={() => {
                               void onOpenProject(project.localPath)

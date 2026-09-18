@@ -7,6 +7,25 @@ import { createEmptyState, type TouchedFile } from "./events"
 import type { WorkingTreeProbe } from "./diff-store"
 
 describe("read models", () => {
+  test("excludes hidden projects even when discovery returns the same folder", () => {
+    const state = createEmptyState()
+    state.projectsById.set("hidden-project", {
+      id: "hidden-project",
+      localPath: "/tmp/hidden-project",
+      title: "Hidden Project",
+      createdAt: 1,
+      updatedAt: 2,
+      deletedAt: 2,
+    })
+
+    const snapshot = deriveLocalProjectsSnapshot(state, [
+      { localPath: "/tmp/hidden-project/", title: "Hidden Project", modifiedAt: 3 },
+      { localPath: "/tmp/visible-project", title: "Visible Project", modifiedAt: 1 },
+    ], "Machine")
+
+    expect(snapshot.projects.map((project) => project.localPath)).toEqual(["/tmp/visible-project"])
+  })
+
   test("includes the project folder modification time", () => {
     const tempRoot = mkdtempSync(path.join(tmpdir(), "kanna-project-mtime-"))
     const projectDir = path.join(tempRoot, "project")
@@ -215,7 +234,7 @@ describe("read models", () => {
     expect(idle.projectGroups[0]?.chats[0]?.pendingUserInputPreview).toBeUndefined()
   })
 
-  test("uses sidebar-only project titles without changing local project metadata", () => {
+  test("shares project display names without changing the original title", () => {
     const state = createEmptyState()
     state.projectsById.set("project-1", {
       id: "project-1",
@@ -229,6 +248,7 @@ describe("read models", () => {
 
     expect(deriveSidebarData(state, new Map()).projectGroups[0]?.title).toBe("Sidebar Name")
     expect(deriveLocalProjectsSnapshot(state, [], "Machine").projects[0]?.title).toBe("Project")
+    expect(deriveLocalProjectsSnapshot(state, [], "Machine").projects[0]?.sidebarTitle).toBe("Sidebar Name")
   })
 
   test("keeps archived chats out of the main sidebar rows", () => {

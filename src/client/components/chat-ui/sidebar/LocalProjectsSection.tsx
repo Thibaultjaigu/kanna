@@ -362,6 +362,8 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
         <ProjectSectionMenu
           editorLabel={editorLabel}
           repoUrl={group.repoUrl}
+          onNewChat={() => onNewLocalChat?.(localPath)}
+          newChatDisabled={!onNewLocalChat || !isConnected || startingLocalPath === localPath}
           onRename={() => onRenameProject?.(groupKey, group.sidebarTitle, group.realTitle || getPathBasename(localPath))}
           onCopyPath={() => onCopyPath?.(localPath)}
           onShowArchived={() => onShowArchivedProject?.(groupKey)}

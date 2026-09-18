@@ -60,7 +60,7 @@ import {
   resolveCloneDestination,
   type RepoRef,
 } from "../../lib/project-fs"
-import { filterProjects, groupProjectsByRecency } from "../../lib/project-groups"
+import { filterProjects, getLocalProjectTitle, groupProjectsByRecency } from "../../lib/project-groups"
 import { useRightSidebarStore } from "../../stores/rightSidebarStore"
 import { setFocusMode, useFocusModeEnabled } from "../../stores/focusModeStore"
 import { useSidebarStore } from "../../stores/sidebarStore"
@@ -116,7 +116,7 @@ export function openCommandPalette(page?: CommandPaletteTargetPage) {
 
 type PalettePage =
   | "models" | "harness" | "new-thread" | "open-in" | "settings" | "usage" | "project-chats"
-  | "add-project" | "clone-github" | "create-new" | "browse"
+  | "add-project" | "clone-github" | "create-new" | "browse" | "hide-project"
 
 /**
  * One level of the palette's page stack. Browse pages each carry the
@@ -568,6 +568,13 @@ export function CommandPalette({ state }: { state: KannaState }) {
         keywords: ["create chat", "compose", "start", "project"],
         icon: <SquarePen className={ICON_CLASS} />,
         run: () => pushPage({ page: "new-thread" }),
+      })
+      list.push({
+        id: "hide-project-choose",
+        title: "Hide",
+        keywords: ["hide project", "remove project", "choose project"],
+        icon: <EyeOff className={ICON_CLASS} />,
+        run: () => pushPage({ page: "hide-project" }),
       })
     }
 
@@ -1145,7 +1152,7 @@ export function CommandPalette({ state }: { state: KannaState }) {
 
   // All local projects, grouped by recency exactly like the "/" route.
   const localProjectGroups = useMemo(() => {
-    if (page !== "add-project" && page !== "new-thread") return []
+    if (page !== "add-project" && page !== "new-thread" && page !== "hide-project") return []
     const filtered = filterProjects(state.localProjects?.projects ?? [], trimmedQuery)
     return groupProjectsByRecency(filtered, nowMs)
   }, [nowMs, page, state.localProjects?.projects, trimmedQuery])
@@ -1293,7 +1300,9 @@ export function CommandPalette({ state }: { state: KannaState }) {
       case "open-in":
         return openInResults[0] ? `open-${openInResults[0].value}` : ""
       case "new-thread":
+      case "hide-project":
         if (localProjectGroups[0]?.projects[0]) return `local-project-${localProjectGroups[0].projects[0].localPath}`
+        if (page === "hide-project") return ""
         return !trimmedQuery || scorePaletteItem(trimmedQuery, "Add Project…", ["create", "add", "new"]) > 0
           ? "project-new"
           : ""
@@ -1429,7 +1438,7 @@ export function CommandPalette({ state }: { state: KannaState }) {
       map.set("project-chats-new", projectChatsGroup.localPath)
       map.set("project-chats-copy-path", projectChatsGroup.localPath)
     }
-    if (page === "new-thread") {
+    if (page === "new-thread" || page === "hide-project") {
       for (const group of localProjectGroups) {
         for (const project of group.projects) {
           map.set(`local-project-${project.localPath}`, project.localPath)
@@ -1458,6 +1467,8 @@ export function CommandPalette({ state }: { state: KannaState }) {
       ? "Choose a harness…"
       : page === "new-thread"
         ? "Choose a project…"
+        : page === "hide-project"
+          ? "Choose project to hide"
         : page === "open-in"
           ? "Open project in…"
           : page === "project-chats"
@@ -1757,7 +1768,7 @@ export function CommandPalette({ state }: { state: KannaState }) {
             </CommandGroup>
           ) : null}
 
-          {page === "new-thread" ? (
+          {page === "new-thread" || page === "hide-project" ? (
             <>
               {localProjectGroups.map((group) => (
                 <CommandGroup key={group.key} heading={group.title}>
@@ -1769,6 +1780,11 @@ export function CommandPalette({ state }: { state: KannaState }) {
                         key={project.localPath}
                         value={value}
                         onSelect={() => {
+                          if (page === "hide-project") {
+                            close()
+                            void state.handleHideProject({ localPath: project.localPath })
+                            return
+                          }
                           void runProjectAction(value, {
                             mode: "existing",
                             localPath: project.localPath,
@@ -1777,7 +1793,7 @@ export function CommandPalette({ state }: { state: KannaState }) {
                         }}
                       >
                         <Folder className={ICON_CLASS} />
-                        <span className="min-w-0 truncate">{getPathBasename(project.localPath)}</span>
+                        <span className="min-w-0 truncate">{getLocalProjectTitle(project)}</span>
                         {busy ? (
                           <Loader2 className="ml-auto h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
                         ) : (
@@ -1790,7 +1806,7 @@ export function CommandPalette({ state }: { state: KannaState }) {
                   })}
                 </CommandGroup>
               ))}
-              {!trimmedQuery || scorePaletteItem(trimmedQuery, "Add Project…", ["create", "add", "new"]) > 0 ? (
+              {page === "new-thread" && (!trimmedQuery || scorePaletteItem(trimmedQuery, "Add Project…", ["create", "add", "new"]) > 0) ? (
                 <CommandGroup>
                   <CommandItem
                     value="project-new"
@@ -1963,7 +1979,7 @@ export function CommandPalette({ state }: { state: KannaState }) {
                         }}
                       >
                         <Folder className={ICON_CLASS} />
-                        <span className="min-w-0 truncate">{getPathBasename(project.localPath)}</span>
+                        <span className="min-w-0 truncate">{getLocalProjectTitle(project)}</span>
                         {busy ? (
                           <Loader2 className="ml-auto h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
                         ) : (

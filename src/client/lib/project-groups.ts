@@ -24,8 +24,12 @@ export interface ProjectRecencyGroup {
   projects: LocalProjectSummary[]
 }
 
+export function getLocalProjectTitle(project: LocalProjectSummary) {
+  return project.sidebarTitle ?? getPathBasename(project.localPath)
+}
+
 function compareProjectsAlphabetically(a: LocalProjectSummary, b: LocalProjectSummary) {
-  return getPathBasename(a.localPath).localeCompare(getPathBasename(b.localPath), undefined, {
+  return getLocalProjectTitle(a).localeCompare(getLocalProjectTitle(b), undefined, {
     sensitivity: "base",
   })
 }
@@ -36,6 +40,7 @@ export function filterProjects(projects: LocalProjectSummary[], search: string) 
 
   return projects.filter((project) => (
     project.title.toLocaleLowerCase().includes(query)
+    || project.sidebarTitle?.toLocaleLowerCase().includes(query)
     || project.localPath.toLocaleLowerCase().includes(query)
   ))
 }

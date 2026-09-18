@@ -113,9 +113,11 @@ export type ClientCommand =
   | { type: "project.open"; localPath: string }
   | { type: "project.create"; localPath: string; title?: string }
   | { type: "project.rename"; projectId: string; title: string }
+  | { type: "project.rename"; localPath: string; title: string }
   | { type: "project.clone"; cloneUrl: string; localPath: string; fallbackPath?: string; title: string }
   | { type: "github.listRecentRepos" }
   | { type: "project.remove"; projectId: string }
+  | { type: "project.remove"; localPath: string }
   | { type: "sidebar.reorderProjectGroups"; projectIds: string[] }
   | { type: "project.readDiffPatch"; projectId: string; path: string }
   // Committing is addressed by project, not by chat: the diff panel's file

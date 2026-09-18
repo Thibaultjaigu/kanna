@@ -41,6 +41,8 @@ export function OpenRepoMenuItem({ repoUrl }: { repoUrl?: string }) {
 export function ProjectSectionMenu({
   editorLabel,
   repoUrl,
+  onNewChat,
+  newChatDisabled = false,
   onRename,
   onCopyPath,
   onShowArchived,
@@ -52,6 +54,8 @@ export function ProjectSectionMenu({
   editorLabel: string
   /** The project's forge page; absent when it has no browsable origin. */
   repoUrl?: string
+  onNewChat: () => void
+  newChatDisabled?: boolean
   onRename: () => void
   onCopyPath: () => void
   onShowArchived: () => void
@@ -65,12 +69,13 @@ export function ProjectSectionMenu({
       <ContextMenuTrigger asChild>
         {children}
       </ContextMenuTrigger>
-      <ContextMenuContent>
+      <ContextMenuContent className="[&_svg]:size-3.5">
+        <ContextMenuItem onSelect={onNewChat} disabled={newChatDisabled}>
+          <SquarePen />
+          <span>New Chat</span>
+        </ContextMenuItem>
         <ContextMenuItem
-          onSelect={(event) => {
-            event.preventDefault()
-            onRename()
-          }}
+          onSelect={onRename}
         >
           <Pencil className="h-3.5 w-3.5" />
           <span className="text-xs font-medium">Rename</span>

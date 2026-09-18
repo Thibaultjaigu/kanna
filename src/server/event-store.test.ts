@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import type { TranscriptEntry } from "../shared/types"
 import type { SnapshotFile } from "./events"
 import { EventStore } from "./event-store"
+import { deriveLocalProjectsSnapshot } from "./read-models"
 
 const originalRuntimeProfile = process.env.KANNA_RUNTIME_PROFILE
 const tempDirs: string[] = []
@@ -1096,21 +1097,31 @@ describe("EventStore", () => {
     expect(reloaded.requireChat(forked.id).lastTurnOutcome).toBeNull()
   })
 
-  test("reopening a removed project restores its existing chats", async () => {
+  test("hidden projects stay absent after restart until reopened with their existing chats", async () => {
     const dataDir = await createTempDataDir()
     const store = new EventStore(dataDir)
     await store.initialize()
 
     const project = await store.openProject("/tmp/project")
     const chat = await store.createChat(project.id)
+    const discovered = [{ localPath: project.localPath, title: project.title, modifiedAt: 1 }]
+    expect(deriveLocalProjectsSnapshot(store.state, discovered, "Machine").projects).toHaveLength(1)
 
     await store.removeProject(project.id)
     expect(store.getProject(project.id)).toBeNull()
+    expect(deriveLocalProjectsSnapshot(store.state, discovered, "Machine").projects).toEqual([])
 
-    const reopened = await store.openProject("/tmp/project")
+    const reloaded = new EventStore(dataDir)
+    await reloaded.initialize()
+    expect(deriveLocalProjectsSnapshot(reloaded.state, discovered, "Machine").projects).toEqual([])
+
+    const reopened = await reloaded.openProject("/tmp/project")
 
     expect(reopened.id).toBe(project.id)
-    expect(store.listChatsByProject(reopened.id).map((entry) => entry.id)).toEqual([chat.id])
+    expect(reloaded.listChatsByProject(reopened.id).map((entry) => entry.id)).toEqual([chat.id])
+    expect(deriveLocalProjectsSnapshot(reloaded.state, discovered, "Machine").projects).toMatchObject([
+      { localPath: project.localPath, source: "saved", chatCount: 1 },
+    ])
   })
 
   test("archives chats without deleting their transcript", async () => {

@@ -1097,6 +1097,7 @@ export interface SidebarData {
 export interface LocalProjectSummary {
   localPath: string
   title: string
+  sidebarTitle?: string
   source: "saved" | "discovered"
   lastOpenedAt?: number
   folderModifiedAt?: number

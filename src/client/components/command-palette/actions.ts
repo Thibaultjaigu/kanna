@@ -159,11 +159,11 @@ export function searchLocalProjects(
   const scored: ScoredLocalProject[] = []
   for (const project of projects) {
     if (excludePaths.has(project.localPath)) continue
-    const score = scorePaletteItem(trimmed, project.title, [project.localPath])
+    const score = scorePaletteItem(trimmed, project.sidebarTitle ?? project.title, [project.title, project.localPath])
     if (score <= 0) continue
     scored.push({
       localPath: project.localPath,
-      title: project.title,
+      title: project.sidebarTitle ?? project.title,
       score,
       sortAt: project.lastOpenedAt ?? project.folderModifiedAt ?? 0,
     })
