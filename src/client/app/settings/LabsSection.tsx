@@ -79,8 +79,12 @@ export function LabsSection({
               ? (
                 <div className="flex flex-col gap-1">
                   <p role="status" className="font-medium text-foreground">{nightlyStatusLabel}</p>
-                  {nightly?.latestCommitSha ? <p>Latest main: <code>{nightly.latestCommitSha.slice(0, 7)}</code></p> : null}
-                  {nightly?.lastCheckedAt ? <p>Last checked {new Date(nightly.lastCheckedAt).toLocaleTimeString()}</p> : null}
+                  {nightly?.latestCommitSha ? (
+                    <p className="whitespace-nowrap">
+                      Latest: <code>{nightly.latestCommitSha.slice(0, 7)}</code>
+                      {nightly.lastCheckedAt ? ` as of ${new Date(nightly.lastCheckedAt).toLocaleTimeString()}` : null}
+                    </p>
+                  ) : nightly?.lastCheckedAt ? <p>Last checked {new Date(nightly.lastCheckedAt).toLocaleTimeString()}</p> : null}
                   {nightly?.error ? <p>{nightly.error}</p> : null}
                 </div>
               )

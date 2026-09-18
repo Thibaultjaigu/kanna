@@ -87,6 +87,10 @@ describe("nightly status in Labs", () => {
     )
     expect(html).toContain(label)
     expect(html).toContain('role="status"')
+    if (nightly?.latestCommitSha && nightly.lastCheckedAt) {
+      expect(html).toContain(`<p class="whitespace-nowrap">Latest: <code>${nightly.latestCommitSha.slice(0, 7)}</code> as of ${new Date(nightly.lastCheckedAt).toLocaleTimeString()}</p>`)
+      expect(html).not.toContain("Last checked")
+    }
     if (nightly?.status === "up_to_date") {
       expect(html).not.toContain("Build Latest")
     } else {
