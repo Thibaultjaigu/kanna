@@ -26,6 +26,7 @@ export interface InitializeParams {
 }
 
 export interface ThreadStartParams {
+  config?: Record<string, unknown>
   model?: string | null
   cwd?: string | null
   serviceTier?: ServiceTier | null
@@ -36,6 +37,7 @@ export interface ThreadStartParams {
 }
 
 export interface ThreadResumeParams {
+  config?: Record<string, unknown>
   threadId: string
   model?: string | null
   cwd?: string | null
@@ -46,6 +48,7 @@ export interface ThreadResumeParams {
 }
 
 export interface ThreadForkParams {
+  config?: Record<string, unknown>
   threadId: string
   model?: string | null
   cwd?: string | null

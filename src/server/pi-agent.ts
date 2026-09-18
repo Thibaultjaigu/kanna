@@ -25,6 +25,8 @@ import { getDataRootDir } from "../shared/branding"
 import { normalizeToolCall } from "../shared/tools"
 import type { HarnessEvent, HarnessTurn } from "./harness-types"
 import { AsyncQueue } from "./async-queue"
+import { KANNA_TOOL_NAMES, type KannaToolHost } from "./kanna-tools"
+import { createPiKannaTools } from "./kanna-tool-adapters"
 import { buildKannaAgentCorrection, buildKannaAgentId, buildKannaAttributionInstructions } from "./attribution"
 import { appendSystemMessageBlock } from "./harness-skills"
 import { OPENROUTER_BASE_URL, readLlmProviderSnapshot } from "./llm-provider"
@@ -255,6 +257,7 @@ export const MISSING_PI_CONNECTION_MESSAGE =
   "Pi needs a Model Registry connection. Add an API key under Settings → Providers → Model Registry (OpenRouter, OpenAI, or a custom OpenAI-compatible URL), or export OPENROUTER_API_KEY."
 
 export interface StartPiTurnArgs {
+  customTools?: KannaToolHost
   chatId: string
   cwd: string
   content: string
@@ -463,7 +466,8 @@ export class PiAgentManager {
       resourceLoader,
       model: this.resolveModel(modelRegistry, args.connection, args.model),
       thinkingLevel: args.effort,
-      tools: [...PI_TOOL_NAMES],
+      tools: [...PI_TOOL_NAMES, ...(args.customTools ? KANNA_TOOL_NAMES : [])],
+      customTools: args.customTools ? createPiKannaTools(args.customTools) : undefined,
     })
 
     const chatSession: PiChatSession = {

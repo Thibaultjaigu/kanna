@@ -298,3 +298,36 @@ describe("clarifyCursorAuthError", () => {
     expect(clarifyCursorAuthError("Cannot use this model: bad-model")).toBe("Cannot use this model: bad-model")
   })
 })
+
+describe("Cursor shared tools", () => {
+  test("loads a private MCP plugin and closes it with the turn", async () => {
+    const fake = makeFakeChild()
+    let argv: string[] = []
+    const manager = new CursorCliManager({ spawnProcess: (args) => { argv = args.argv; return fake.child } })
+    const turn = await manager.startTurn({
+      cwd: "/repo", content: "Test tools", model: "composer-2.5", sessionToken: null,
+      customTools: { execute: async () => ({ content: [{ type: "text", text: "ok" }] }) },
+    })
+    try {
+      const pluginPath = argv[argv.indexOf("--plugin-dir") + 1]!
+      expect(pluginPath).not.toStartWith("/repo")
+      const config = await Bun.file(`${pluginPath}/mcp.json`).json()
+      expect((await Bun.file(`${pluginPath}/.cursor-plugin/plugin.json`).json()).name).toBe("kanna-tools")
+      expect(config.mcpServers.kanna.url).toStartWith("http://127.0.0.1:")
+      expect(argv).toContain("--approve-mcps")
+      expect((await fetch(config.mcpServers.kanna.url)).status).toBe(401)
+      fake.close(0)
+      await expect(fetch(config.mcpServers.kanna.url)).rejects.toThrow()
+    } finally {
+      turn.close()
+    }
+  })
+
+  test("preserves the MCP tool name from Cursor's nested args", () => {
+    const entry = firstEntry(JSON.stringify({
+      type: "tool_call", subtype: "started", call_id: "cursor-input",
+      tool_call: { mcpToolCall: { args: { providerIdentifier: "plugin-kanna-tools-kanna", toolName: "show_chart", args: { prompt: "Value" } } } },
+    }))
+    expect(entry).toMatchObject({ kind: "tool_call", tool: { toolName: "show_chart" } })
+  })
+})

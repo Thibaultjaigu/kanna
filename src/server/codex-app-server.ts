@@ -14,6 +14,8 @@ import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-ty
 import { appendSystemMessageBlock, buildSkillSystemMessage } from "./harness-skills"
 import { buildKannaAgentId, buildKannaAttributionInstructions } from "./attribution"
 import { AsyncQueue } from "./async-queue"
+import type { KannaToolHost } from "./kanna-tools"
+import { createKannaMcpServer } from "./kanna-mcp"
 import { asNumber, asRecord } from "../shared/json"
 import { timestamped } from "./transcript"
 import {
@@ -128,6 +130,7 @@ interface PendingTurn {
 }
 
 interface SessionContext {
+  customTools?: ReturnType<typeof createKannaMcpServer>
   chatId: string
   cwd: string
   child: CodexAppServerProcess
@@ -139,6 +142,7 @@ interface SessionContext {
 }
 
 export interface StartCodexSessionArgs {
+  customTools?: KannaToolHost
   chatId: string
   cwd: string
   model: string
@@ -873,7 +877,9 @@ export class CodexAppServerManager {
     }
 
     const child = this.spawnProcess(args.cwd)
+    const customTools = args.customTools ? createKannaMcpServer(args.customTools) : undefined
     const context: SessionContext = {
+      customTools,
       chatId: args.chatId,
       cwd: args.cwd,
       child,
@@ -886,70 +892,88 @@ export class CodexAppServerManager {
     this.sessions.set(args.chatId, context)
     this.attachListeners(context)
 
-    await this.sendRequest(context, "initialize", {
-      clientInfo: {
-        name: "kanna_desktop",
-        title: "Kanna",
-        version: "0.1.0",
-      },
-      capabilities: {
-        experimentalApi: true,
-      },
-    } satisfies InitializeParams)
-    this.writeMessage(context, {
-      method: "initialized",
-    })
+    try {
+      await this.sendRequest(context, "initialize", {
+        clientInfo: {
+          name: "kanna_desktop",
+          title: "Kanna",
+          version: "0.1.0",
+        },
+        capabilities: {
+          experimentalApi: true,
+        },
+      } satisfies InitializeParams)
+      this.writeMessage(context, {
+        method: "initialized",
+      })
 
-    const threadParams = {
-      model: args.model,
-      cwd: args.cwd,
-      serviceTier: args.serviceTier,
-      approvalPolicy: "never",
-      sandbox: "danger-full-access",
-      experimentalRawEvents: false,
-      persistExtendedHistory: false,
-    } satisfies ThreadStartParams
-
-    let response: ThreadStartResponse | ThreadResumeResponse | ThreadForkResponse
-    // Set when a requested resume failed recoverably and we started a fresh
-    // thread instead — the caller surfaces this as a "Conversation Restored"
-    // boundary so the silent context loss becomes visible.
-    let resumeFellBack = false
-    if (args.pendingForkSessionToken) {
-      response = await this.sendRequest<ThreadForkResponse>(context, "thread/fork", {
-        threadId: args.pendingForkSessionToken,
+      // Resume and fork accept MCP config, but this CLI only accepts dynamic tools on thread/start.
+      const toolConfig = customTools ? {
+        config: {
+          "mcp_servers.kanna": {
+            url: customTools.url,
+            http_headers: customTools.headers,
+            tool_timeout_sec: 86400,
+          },
+        },
+      } : {}
+      const threadParams = {
         model: args.model,
         cwd: args.cwd,
         serviceTier: args.serviceTier,
         approvalPolicy: "never",
         sandbox: "danger-full-access",
+        experimentalRawEvents: false,
         persistExtendedHistory: false,
-      } satisfies ThreadForkParams)
-    } else if (args.sessionToken) {
-      try {
-        response = await this.sendRequest<ThreadResumeResponse>(context, "thread/resume", {
-          threadId: args.sessionToken,
+        ...toolConfig,
+      } satisfies ThreadStartParams
+
+      let response: ThreadStartResponse | ThreadResumeResponse | ThreadForkResponse
+      // Set when a requested resume failed recoverably and we started a fresh
+      // thread instead — the caller surfaces this as a "Conversation Restored"
+      // boundary so the silent context loss becomes visible.
+      let resumeFellBack = false
+      if (args.pendingForkSessionToken) {
+        response = await this.sendRequest<ThreadForkResponse>(context, "thread/fork", {
+          threadId: args.pendingForkSessionToken,
           model: args.model,
           cwd: args.cwd,
           serviceTier: args.serviceTier,
           approvalPolicy: "never",
           sandbox: "danger-full-access",
           persistExtendedHistory: false,
-        } satisfies ThreadResumeParams)
-      } catch (error) {
-        if (!isRecoverableResumeError(error)) {
-          this.stopSession(args.chatId)
-          throw error
+          ...toolConfig,
+        } satisfies ThreadForkParams)
+      } else if (args.sessionToken) {
+        try {
+          response = await this.sendRequest<ThreadResumeResponse>(context, "thread/resume", {
+            threadId: args.sessionToken,
+            model: args.model,
+            cwd: args.cwd,
+            serviceTier: args.serviceTier,
+            approvalPolicy: "never",
+            sandbox: "danger-full-access",
+            persistExtendedHistory: false,
+            ...toolConfig,
+          } satisfies ThreadResumeParams)
+        } catch (error) {
+          if (!isRecoverableResumeError(error)) {
+            this.stopSession(args.chatId)
+            throw error
+          }
+          response = await this.sendRequest<ThreadStartResponse>(context, "thread/start", threadParams)
+          resumeFellBack = true
         }
+      } else {
         response = await this.sendRequest<ThreadStartResponse>(context, "thread/start", threadParams)
-        resumeFellBack = true
       }
-    } else {
-      response = await this.sendRequest<ThreadStartResponse>(context, "thread/start", threadParams)
-    }
 
-    context.sessionToken = response.thread.id
-    return { sessionToken: context.sessionToken, resumeFellBack }
+      context.sessionToken = response.thread.id
+      return { sessionToken: context.sessionToken, resumeFellBack }
+    } catch (error) {
+      this.stopSession(args.chatId)
+      throw error
+    }
   }
 
   async startTurn(args: StartCodexTurnArgs): Promise<HarnessTurn> {
@@ -1619,6 +1643,7 @@ export class CodexAppServerManager {
   }
 
   private failContext(context: SessionContext, message: string) {
+    context.customTools?.close()
     const pendingTurn = context.pendingTurn
     if (pendingTurn && !pendingTurn.resolved) {
       pendingTurn.queue.push({

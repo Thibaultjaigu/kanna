@@ -1,0 +1,109 @@
+import { z } from "zod"
+import { mkdir, open, copyFile, rm } from "node:fs/promises"
+import { constants } from "node:fs"
+import path from "node:path"
+import { fileTypeFromBuffer } from "file-type"
+import { CHART_COLORS, resolveChartKeys, type ChartToolPayload, type DisplayAttachment } from "../shared/display-tools"
+import { buildTranscriptMediaUrl, getTranscriptMediaDir } from "./transcript-media"
+import type { KannaToolDefinition } from "./kanna-tools"
+
+const chartSchema = z.strictObject({
+  title: z.string().min(1),
+  description: z.string(),
+  type: z.enum(["bar", "line", "area", "pie"]),
+  data: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.null()]))).min(1).max(5000),
+  xKey: z.string().optional(), yKeys: z.array(z.string()).optional(),
+  xAxisKey: z.string().optional(), dataKeys: z.array(z.string()).optional(),
+  config: z.record(z.string(), z.strictObject({ label: z.string().optional(), color: z.enum(CHART_COLORS).optional() })).optional(),
+  stacked: z.boolean().optional(),
+})
+
+const attachmentSchema = z.strictObject({
+  description: z.string(),
+  attachments: z.array(z.strictObject({
+    path: z.string().min(1).optional().describe("Local file path, absolute or relative to the project directory."),
+    url: z.string().url().optional().describe("HTTP or HTTPS URL. Provide path or url, not both."),
+    caption: z.string().optional(),
+    kind: z.enum(["image", "video", "file"]).optional().describe("For web URLs without a file extension, specify the media kind. Local files use their detected type."),
+  })).min(1).max(24),
+})
+
+// SVG and HTML stay downloads. They must not run scripts on the app's origin.
+export function attachmentKind(mime: string): DisplayAttachment["kind"] {
+  if (["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"].includes(mime)) return "image"
+  if (["video/mp4", "video/webm", "video/quicktime", "video/ogg"].includes(mime)) return "video"
+  return "file"
+}
+
+export const DISPLAY_TOOLS: readonly KannaToolDefinition[] = [
+  {
+    name: "show_chart",
+    description: "Show a chart in the chat. Supports bar, line, area, and pie charts, series labels, and stacked bars or areas. Supply numeric series and a category column. Series colors: #00a6f5, #615fff, #f6339a, #fe9900, #00bd7c.",
+    schema: chartSchema,
+    async execute(input) {
+      const chart = input as unknown as ChartToolPayload
+      const { keys } = resolveChartKeys(chart)
+      if (!keys.length) throw new Error("The chart needs at least one numeric series other than its category column.")
+      if (chart.type === "pie" && chart.data.some(row => typeof row[keys[0]!] === "number" && Number(row[keys[0]!]) < 0)) {
+        throw new Error("Pie chart values must not be negative.")
+      }
+      return { content: [{ type: "text", text: "Chart displayed." }], structuredContent: { displayed: true } }
+    },
+  },
+  {
+    name: "send_attachments",
+    description: "Show images, videos, and file links in the chat. Supply local paths or HTTP/HTTPS URLs, with optional captions. Local files are copied into the chat so they remain available after the source changes. Images and videos appear inline; other files appear as download links.",
+    schema: attachmentSchema,
+    async execute(input, context) {
+      const { attachments } = attachmentSchema.parse(input)
+      const resolved: DisplayAttachment[] = []
+      const copied: string[] = []
+      try {
+        for (const item of attachments) {
+          context.signal.throwIfAborted()
+          if (Boolean(item.path) === Boolean(item.url)) throw new Error("Each attachment needs exactly one path or url.")
+          if (item.url) {
+            const url = new URL(item.url)
+            if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) throw new Error("Attachment URLs must use HTTP or HTTPS without embedded credentials.")
+            const name = decodeURIComponent(url.pathname.split("/").pop() || "attachment")
+            const mimeType = Bun.file(name).type || "application/octet-stream"
+            const kind = mimeType === "image/svg+xml" ? "file" : item.kind ?? attachmentKind(mimeType)
+            resolved.push({ type: "attachment", url: url.href, name, kind, caption: item.caption, mimeType, size: null })
+            continue
+          }
+          if (!context.dataDir) throw new Error("Chat media storage is unavailable.")
+          const source = path.resolve(context.cwd, item.path!)
+          const handle = await open(source, constants.O_RDONLY | constants.O_NONBLOCK)
+          let mimeType: string
+          let size: number
+          try {
+            const info = await handle.stat()
+            if (!info.isFile()) throw new Error("Attachments must be files.")
+            if (info.size > 100 * 1024 * 1024) throw new Error("Attachments must be 100 MB or smaller.")
+            size = info.size
+            const header = Buffer.alloc(Math.min(size, 8192))
+            await handle.read(header, 0, header.length, 0)
+            mimeType = (await fileTypeFromBuffer(header).catch(() => undefined))?.mime ?? Bun.file(source).type ?? "application/octet-stream"
+          } finally { await handle.close() }
+          const name = path.basename(source)
+          const storedName = `attachment-${crypto.randomUUID()}-${name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120)}`
+          const dir = getTranscriptMediaDir(context.dataDir, context.chatId)
+          await mkdir(dir, { recursive: true })
+          const destination = path.join(dir, storedName)
+          copied.push(destination)
+          await copyFile(source, destination)
+          resolved.push({ type: "attachment", url: buildTranscriptMediaUrl(context.chatId, storedName), name, kind: attachmentKind(mimeType), caption: item.caption, mimeType, size })
+        }
+        context.signal.throwIfAborted()
+        return {
+          content: [{ type: "text", text: `Displayed ${resolved.length} attachment${resolved.length === 1 ? "" : "s"}.` }],
+          structuredContent: { displayed: true, attachments: resolved },
+          transcriptContent: resolved,
+        }
+      } catch (error) {
+        await Promise.all(copied.map(file => rm(file, { force: true })))
+        throw error
+      }
+    },
+  },
+]

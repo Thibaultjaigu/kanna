@@ -6,6 +6,7 @@ import { stripWorkspacePath } from "../../lib/pathUtils"
 import { AnimatedShinyText } from "../ui/animated-shiny-text"
 import { formatBashCommandTitle, toTitleCase } from "../../lib/formatters"
 import { ToolCallExpandedContent } from "./ToolCallExpandedContent"
+import { DisplayToolMessage } from "./DisplayToolMessage"
 import { useToolPayloadPrefetch } from "./tool-payload-context"
 
 interface Props {
@@ -80,6 +81,8 @@ export function ToolCallMessage({ message, isLoading = false, localPath }: Props
       message.resultTrimmed ? message.resultEntryId : undefined,
     ])
   }
+
+  if (message.toolKind === "display") return <DisplayToolMessage message={message} />
 
   return (
     <MetaRow className="w-full" onPointerEnter={prefetchOwnPayloads}>

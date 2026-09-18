@@ -27,6 +27,19 @@ const inputOf = (entry: TranscriptEntry) => (entry as unknown as { tool: { input
 const asResult = (entry: TranscriptEntry) => entry as unknown as { content?: unknown; isError?: boolean; structuredResult?: unknown; trimmed?: true }
 
 describe("cloneTranscriptEntriesForClient", () => {
+  test("keeps inline results when their calls are outside the streamed slice", () => {
+    for (const kind of ["display", "ask_user_question", "exit_plan_mode", "todo_write", "bash"]) {
+      const result = toolResult(kind, { value: "result" })
+      const [cloned] = cloneTranscriptEntriesForClient([result], id => id === `tid-${kind}` ? kind : undefined)
+      if (kind === "bash") {
+        expect(asResult(cloned!).trimmed).toBe(true)
+        expect(asResult(cloned!).content).toBeUndefined()
+      } else {
+        expect(cloned).toEqual(result)
+      }
+    }
+  })
+
   test("drops the unbounded input field of each kind that has one", () => {
     const [write, edit, remove, mcp, unknown] = call([
       toolCall("write_file", { filePath: "a.ts", content: "x".repeat(1000) }),

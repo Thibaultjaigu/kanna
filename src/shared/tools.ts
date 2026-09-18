@@ -1,3 +1,4 @@
+import { resolveChartKeys, type ChartToolPayload } from "./display-tools"
 import type {
   AskUserQuestionItem,
   AskUserQuestionAnswerMap,
@@ -20,6 +21,14 @@ export function normalizeToolCall(args: {
   input: Record<string, unknown>
 }): NormalizedToolCall {
   const { toolName, toolId, input } = args
+
+  if (toolName === "show_chart" || toolName === "send_attachments") {
+    // Native clients cannot depend on the order of keys in a JSON object.
+    const chartKeys = toolName === "show_chart" && Array.isArray(input.data)
+      ? resolveChartKeys(input as unknown as ChartToolPayload) : undefined
+    const payload = chartKeys ? { ...input, xAxisKey: chartKeys.xKey, dataKeys: chartKeys.keys } : input
+    return { kind: "tool", toolKind: "display", toolName, toolId, input: { payload }, rawInput: payload }
+  }
 
   switch (toolName) {
     case "AskUserQuestion":

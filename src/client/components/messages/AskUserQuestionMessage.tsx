@@ -161,7 +161,8 @@ export function AskUserQuestionMessage({ message, onSubmit, isLatest }: Props) {
   const [isSubmitted, setIsSubmitted] = useState(isComplete)
 
   const getEffectiveAnswers = (questionKey: string, question?: AskUserQuestionItem) => {
-    const custom = customInputs[questionKey]?.trim()
+    const rawCustom = customInputs[questionKey]
+    const custom = rawCustom?.trim()
     const selectedAnswer = answers[questionKey] || ""
     const q = question || questions.find((candidate) => getQuestionKey(candidate) === questionKey)
 
@@ -367,17 +368,18 @@ export function AskUserQuestionMessage({ message, onSubmit, isLatest }: Props) {
           <div className="flex pr-5 items-center justify-between gap-3">
             <input
               type="text"
+              aria-label={currentQuestion.question}
               value={customInput}
               onChange={(e) => handleCustomInputChange(currentQuestion, e.target.value)}
               onKeyDown={handleCustomInputEnter}
-              placeholder="Other..."
+              placeholder={currentQuestion.options?.length ? "Other..." : "Enter a value"}
               className="flex-1 px-3 !py-1 pl-4 min-h-[55px] min-w-0 text-sm bg-transparent outline-none text-foreground placeholder:text-muted-foreground"
             />
-            <Checkbox
+            {!!currentQuestion.options?.length && <Checkbox
               selected={!!customInput}
               multiSelect={currentQuestion.multiSelect}
               onClick={currentQuestion.multiSelect && customInput ? () => clearCustomInput(currentQuestion) : undefined}
-            />
+            />}
           </div>
         </div>
       </QuestionCard>

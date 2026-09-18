@@ -222,3 +222,28 @@ describe("writeStandaloneTranscriptExport", () => {
     expect(JSON.stringify(JSON.parse(result.transcriptJson))).not.toContain(projectDir)
   })
 })
+
+test("bundles sent files and preserves external attachment URLs", async () => {
+  const viewerDistDir = await createViewerDist()
+  const projectDir = await createTempDir("kanna-display-export-")
+  const source = path.join(projectDir, "report.txt")
+  await writeFile(source, "Report contents")
+  const result = await writeStandaloneTranscriptExport({
+    chatId: "chat-1", title: "Report", localPath: projectDir, theme: "light", attachmentMode: "bundle",
+    resolveMediaPath: url => url === "/api/chats/chat-1/media/report.txt" ? source : null,
+    messages: [{ _id: "result", createdAt: 1, kind: "tool_result", toolId: "files", content: [
+      { type: "attachment", kind: "file", name: "report.txt", url: "/api/chats/chat-1/media/report.txt" },
+      { type: "attachment", kind: "image", name: "photo", url: "https://example.com/photo.png" },
+    ] }],
+  }, {
+    viewerDistDir,
+    fetch: async () => new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } }),
+    sharePublicBaseUrl: "https://share.example.com", shareUploadBaseUrl: "https://upload.example.com/api/share", shareSlugSuffix: "display1",
+  })
+  expect(result.ok).toBe(true)
+  if (!result.ok) throw new Error(result.error)
+  const bundle = await Bun.file(result.transcriptJsonPath).json()
+  expect(bundle.messages[0].content[0].url).toBe("./attachments/report.txt")
+  expect(bundle.messages[0].content[1].url).toBe("https://example.com/photo.png")
+  expect(await Bun.file(path.join(result.outputDir, "attachments/report.txt")).text()).toBe("Report contents")
+})

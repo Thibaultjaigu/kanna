@@ -421,7 +421,7 @@ export const STRUCTURED_RESULT_TOOL_KINDS: ReadonlySet<string> = new Set(["ask_u
  * travel with the transcript rather than being fetched when a row is opened —
  * there is no row to open. Superset of the structured-result kinds.
  */
-export const INLINE_TOOL_KINDS: ReadonlySet<string> = new Set([...STRUCTURED_RESULT_TOOL_KINDS, "todo_write"])
+export const INLINE_TOOL_KINDS: ReadonlySet<string> = new Set([...STRUCTURED_RESULT_TOOL_KINDS, "todo_write", "display"])
 
 /**
  * Tool call input fields that can grow without bound, by kind. The other
@@ -484,17 +484,14 @@ export function trimToolCallEntry(entry: Extract<TranscriptEntry, { kind: "tool_
  * This is the only place the reduction happens. Full-fidelity consumers —
  * export, handoff, fork — read through `getMessages` and never pass here.
  */
-export function cloneTranscriptEntriesForClient(entries: TranscriptEntry[]): TranscriptEntry[] {
-  const structuredToolIds = new Set<string>()
-  const inlineToolIds = new Set<string>()
+export function cloneTranscriptEntriesForClient(
+  entries: TranscriptEntry[],
+  getToolKind?: (toolId: string) => string | undefined,
+): TranscriptEntry[] {
+  const toolKinds = new Map<string, string>()
   for (const entry of entries) {
     if (entry.kind !== "tool_call") continue
-    if (STRUCTURED_RESULT_TOOL_KINDS.has(entry.tool.toolKind)) {
-      structuredToolIds.add(entry.tool.toolId)
-    }
-    if (INLINE_TOOL_KINDS.has(entry.tool.toolKind)) {
-      inlineToolIds.add(entry.tool.toolId)
-    }
+    toolKinds.set(entry.tool.toolId, entry.tool.toolKind)
   }
 
   return entries.map((entry) => {
@@ -504,11 +501,13 @@ export function cloneTranscriptEntriesForClient(entries: TranscriptEntry[]): Tra
     }
 
     if (entry.kind === "tool_result") {
-      const structured = structuredToolIds.has(entry.toolId)
+      // A streamed result can arrive in a later slice than its call.
+      const toolKind = toolKinds.get(entry.toolId) ?? getToolKind?.(entry.toolId) ?? ""
+      const structured = STRUCTURED_RESULT_TOOL_KINDS.has(toolKind)
         ? entry.structuredResult ?? readStructuredResult(entry.debugRaw)
         : undefined
       const stripped = withoutDebugRaw(entry)
-      if (inlineToolIds.has(stripped.toolId)) {
+      if (INLINE_TOOL_KINDS.has(toolKind)) {
         return structured === undefined ? stripped : { ...stripped, structuredResult: structured }
       }
       // An orphan result — no call in this transcript — is trimmed too: the

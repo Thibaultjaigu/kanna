@@ -1,0 +1,182 @@
+import { describe, expect, test } from "bun:test"
+import { z } from "zod"
+import { validateToolArguments } from "@mariozechner/pi-ai"
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import type { TranscriptEntry } from "../shared/types"
+import { KannaToolRuntime, KannaToolEventFilter, KANNA_TOOL_NAMES, type KannaToolDefinition } from "./kanna-tools"
+import { createClaudeKannaTools, createPiKannaTools } from "./kanna-tool-adapters"
+import { createKannaMcpServer } from "./kanna-mcp"
+import { parseTranscriptMediaUrl, getTranscriptMediaDir, retargetEntryMediaUrls } from "./transcript-media"
+import { EventStore } from "./event-store"
+import { splitTranscriptEntry } from "./transcript-payloads"
+
+const chart = { title: "Sales", description: "Sales by month", type: "bar", data: [{ month: "Jan", revenue: 10 }, { month: "Feb", revenue: 20 }] }
+const attachments = { description: "Report", attachments: [{ url: "https://example.com/chart.png", caption: "Sales chart" }, { url: "https://example.com/report.pdf" }] }
+const inputTool: KannaToolDefinition = {
+  name: "test_input", description: "Test input", schema: z.strictObject({}), waitsForUser: true,
+  async execute(_input, context) {
+    const value = await context.requestInput("Value")
+    return { content: [{ type: "text", text: value }], structuredContent: { answers: { value: [value] } } }
+  },
+}
+function setup(dataDir?: string, definitions?: readonly KannaToolDefinition[]) {
+  const entries: TranscriptEntry[] = []
+  const replies: Array<(value: unknown) => void> = []
+  const runtime = new KannaToolRuntime({ chatId: "chat-1", cwd: dataDir ?? "/project", dataDir,
+    emit: async entry => { entries.push(entry) },
+    requestInput: async (_request, signal) => new Promise(resolve => {
+      replies.push(resolve)
+      signal.addEventListener("abort", () => resolve({ discarded: true }), { once: true })
+    }),
+  }, definitions)
+  return { runtime, entries, replies }
+}
+async function until(predicate: () => boolean) {
+  for (let i = 0; i < 100; i++) { if (predicate()) return; await Bun.sleep(5) }
+  throw new Error("Condition did not become true")
+}
+
+describe("shared Kanna display tools", () => {
+  test("replaces demo tools and keeps chart data available in transcript headers", async () => {
+    expect(KANNA_TOOL_NAMES).toEqual(["show_chart", "send_attachments"])
+    const { runtime, entries } = setup()
+    expect(await runtime.execute("show_chart", chart)).toMatchObject({ structuredContent: { displayed: true } })
+    expect(entries.map(entry => entry.kind)).toEqual(["tool_call", "tool_result"])
+    expect(entries[0]).toMatchObject({ tool: { toolKind: "display", input: { payload: { xAxisKey: "month", dataKeys: ["revenue"] } } } })
+    expect(splitTranscriptEntry(entries[0]!, () => true).payload).toBeNull()
+    expect(await runtime.execute("tool_test_smiley", {})).toMatchObject({ isError: true })
+    expect(await runtime.execute("tool_test_input", {})).toMatchObject({ isError: true })
+  })
+  test("rejects invalid chart series and negative pie values", async () => {
+    const { runtime } = setup()
+    expect(await runtime.execute("show_chart", { ...chart, data: [{ month: "Jan" }] })).toMatchObject({ isError: true })
+    expect(await runtime.execute("show_chart", { ...chart, type: "pie", data: [{ month: "Jan", revenue: -1 }] })).toMatchObject({ isError: true })
+    expect(await runtime.execute("show_chart", { ...chart, type: "unknown" })).toMatchObject({ isError: true })
+  })
+  test("resolves media types and rejects unsafe URLs or ambiguous sources", async () => {
+    const { runtime, entries } = setup()
+    const result = await runtime.execute("send_attachments", attachments)
+    expect(result).not.toHaveProperty("transcriptContent")
+    expect(entries[1]).toMatchObject({ content: [{ kind: "image", caption: "Sales chart" }, { kind: "file" }] })
+    expect(await runtime.execute("send_attachments", { description: "Image", attachments: [{ url: "https://example.com/photo?id=1", kind: "image" }] }))
+      .toMatchObject({ structuredContent: { attachments: [{ kind: "image" }] } })
+    for (const item of [{ url: "javascript:alert(1)" }, { url: "https://user:password@example.com/a.png" }, {}, { path: "a", url: "https://example.com/a" }]) {
+      expect(await runtime.execute("send_attachments", { description: "test", attachments: [item] })).toMatchObject({ isError: true })
+    }
+  })
+  test("copies local files, preserves captions, and retargets forked links", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "kanna-attachments-"))
+    try {
+      await writeFile(path.join(dir, "report.txt"), "Saved report")
+      const { runtime, entries } = setup(dir)
+      expect(await runtime.execute("send_attachments", { description: "Report", attachments: [{ path: "report.txt", caption: "Report caption" }] })).not.toHaveProperty("isError")
+      const result = entries[1]!
+      if (result.kind !== "tool_result") throw new Error("Expected result")
+      const [attachment] = result.content as Array<{ url: string }>
+      const parsed = parseTranscriptMediaUrl(attachment!.url)!
+      await rm(path.join(dir, "report.txt"))
+      expect(await readFile(path.join(getTranscriptMediaDir(dir, "chat-1"), parsed.name), "utf8")).toBe("Saved report")
+      expect(retargetEntryMediaUrls(result, "chat-1", "fork")).toMatchObject({ content: [{ url: attachment!.url.replace("chat-1", "fork") }] })
+    } finally { await rm(dir, { recursive: true, force: true }) }
+  })
+  test("display payloads survive a store restart without extra fetches", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "kanna-display-store-"))
+    try {
+      const store = new EventStore(dir)
+      await store.initialize()
+      const project = await store.openProject(dir, "Display tools")
+      const chat = await store.createChat(project.id)
+      const runtime = new KannaToolRuntime({ chatId: chat.id, cwd: dir, dataDir: dir,
+        emit: entry => store.appendMessage(chat.id, entry).then(() => {}), requestInput: async () => ({}),
+      })
+      await runtime.execute("show_chart", chart)
+      await runtime.execute("send_attachments", attachments)
+      const reopened = new EventStore(dir)
+      await reopened.initialize()
+      const entries = reopened.getClientTranscript(chat.id).messages
+      expect(entries[0]).toMatchObject({ tool: { toolKind: "display", input: { payload: { title: "Sales" } } } })
+      expect(entries[3]).toMatchObject({ content: [{ type: "attachment", kind: "image" }, { type: "attachment", kind: "file" }] })
+      expect(entries.every(entry => !("trimmed" in entry))).toBe(true)
+      // A live push often contains only the result, after an earlier push sent its call.
+      expect(store.getClientTranscript(chat.id, 3).messages).toEqual([entries[3]!])
+      expect(reopened.getClientTranscript(chat.id, 3).messages).toEqual([entries[3]!])
+      expect(store.getClientTranscript(chat.id, 1).messages[0]).toEqual(entries[1])
+    } finally { await rm(dir, { recursive: true, force: true }) }
+  })
+  test("keeps generic input waiting, serialization, and cancellation", async () => {
+    const { runtime, replies } = setup(undefined, [inputTool])
+    let resolved = false
+    const first = runtime.execute("test_input", {}).then(result => { resolved = true; return result })
+    const second = runtime.execute("test_input", {})
+    await until(() => replies.length === 1)
+    expect(resolved).toBe(false)
+    replies[0]!({ answers: { value: [" exact value "] } })
+    expect(await first).toMatchObject({ content: [{ text: " exact value " }] })
+    await until(() => replies.length === 2)
+    runtime.abort()
+    expect(await second).toMatchObject({ isError: true, structuredContent: { discarded: true } })
+  })
+  test("suppresses provider copies without dropping other tools", () => {
+    const filter = new KannaToolEventFilter()
+    expect(filter.skip({ kind: "tool_call", tool: { toolName: "mcp__kanna__show_chart", toolId: "native-1" } } as TranscriptEntry)).toBe(true)
+    expect(filter.skip({ kind: "tool_result", toolId: "native-1" } as TranscriptEntry)).toBe(true)
+    expect(filter.skip({ kind: "tool_result", toolId: "other" } as TranscriptEntry)).toBe(false)
+  })
+  test("Claude exposes and executes both tools through MCP", async () => {
+    const { runtime } = setup()
+    const server = createClaudeKannaTools(runtime)
+    const client = new Client({ name: "test", version: "1" })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await server.instance.connect(serverTransport)
+    await client.connect(clientTransport)
+    try {
+      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(KANNA_TOOL_NAMES)
+      expect(await client.callTool({ name: "show_chart", arguments: chart })).toMatchObject({ structuredContent: { displayed: true } })
+      expect(await client.callTool({ name: "send_attachments", arguments: attachments })).toMatchObject({ structuredContent: { displayed: true } })
+    } finally { runtime.abort(); await client.close(); await server.instance.close() }
+  })
+  test("Pi registers and executes both tools", async () => {
+    const { runtime } = setup()
+    const tools = createPiKannaTools(runtime)
+    expect(tools.map(tool => tool.name)).toEqual(KANNA_TOOL_NAMES)
+    for (const [index, input] of [chart, attachments].entries()) {
+      const tool = tools[index]!
+      const validated = validateToolArguments(tool, { type: "toolCall", id: "pi-1", name: tool.name, arguments: input })
+      expect(await tool.execute("pi-1", validated, undefined, undefined, {} as never)).toMatchObject({ details: { displayed: true } })
+    }
+  })
+  test("Pi validation preserves chart numbers, category strings, and missing values", async () => {
+    const { runtime, entries } = setup()
+    const tool = createPiKannaTools(runtime)[0]!
+    const input = { ...chart, type: "line", xKey: "n", yKeys: ["value"],
+      data: [{ n: "001", value: 0 }, { n: "002", value: 1 }, { n: "003", value: null }, { n: "004", value: 2.5 }],
+      config: { value: { label: "Fibonacci", color: "#00a6f5" } },
+    }
+    const validated = validateToolArguments(tool, { type: "toolCall", id: "pi-chart", name: tool.name, arguments: input })
+    expect(validated).toEqual(input)
+    expect(await tool.execute("pi-chart", validated, undefined, undefined, {} as never)).toMatchObject({ details: { displayed: true } })
+    expect(entries[0]).toMatchObject({ tool: { input: { payload: { data: input.data, xAxisKey: "n", dataKeys: ["value"] } } } })
+    expect(() => validateToolArguments(tool, { type: "toolCall", id: "invalid", name: tool.name,
+      arguments: { ...input, data: [{ n: "001", value: { nested: 1 } }] },
+    })).toThrow("Validation failed")
+  })
+  test("HTTP MCP authenticates requests and isolates chats", async () => {
+    const first = setup(), second = setup()
+    const servers = [createKannaMcpServer(first.runtime), createKannaMcpServer(second.runtime)]
+    const client = new Client({ name: "test", version: "1" })
+    try {
+      expect((await fetch(servers[0]!.url)).status).toBe(401)
+      expect((await fetch(servers[0]!.url, { headers: servers[1]!.headers })).status).toBe(401)
+      await client.connect(new StreamableHTTPClientTransport(new URL(servers[0]!.url), { requestInit: { headers: servers[0]!.headers } }))
+      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(KANNA_TOOL_NAMES)
+      expect(await client.callTool({ name: "show_chart", arguments: chart })).toMatchObject({ structuredContent: { displayed: true } })
+      expect(first.entries).toHaveLength(2)
+      expect(second.entries).toHaveLength(0)
+    } finally { await client.close(); for (const server of servers) server.close() }
+  })
+})

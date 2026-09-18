@@ -211,14 +211,24 @@ function ThreadSectionsImpl({
 
   return (
     <div>
-      {pinnedGroups.map((group) => (
-        <div key={group.key}>
-          <SectionHeader label={group.heading} />
-          <div className="space-y-[2px] mb-3">
-            {group.threads.map(renderRow)}
+      {pinnedGroups.map((group) => {
+        const collapsible = group.key === "pinned"
+        const isExpanded = !collapsible || (expandOverrides[group.key] ?? true)
+        return (
+          <div key={group.key}>
+            <SectionHeader
+              label={group.heading}
+              isExpanded={isExpanded}
+              onToggle={collapsible ? () => toggleBucket(group.key, true) : undefined}
+            />
+            {isExpanded ? (
+              <div className="space-y-[2px] mb-3">
+                {group.threads.map(renderRow)}
+              </div>
+            ) : null}
           </div>
-        </div>
-      ))}
+        )
+      })}
       {relevant.length > 0 ? (() => {
         // Collapsible like a date bucket, but starts open — it's the reason the
         // section exists. Sits above Today so everything waiting on you or

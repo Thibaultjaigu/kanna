@@ -86,6 +86,7 @@ function sameRestore(left: SessionRestore | undefined, right: SessionRestore | u
 
 function isCollapsibleToolCall(message: HydratedTranscriptMessage) {
   if (message.kind !== "tool") return false
+  if (message.toolKind === "ask_user_question" || message.toolKind === "display") return false
   const toolName = (message as ProcessedToolCall).toolName
   return !SPECIAL_TOOL_NAME_SET.has(toolName)
 }

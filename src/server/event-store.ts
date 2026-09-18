@@ -1143,14 +1143,18 @@ export class EventStore {
    * close to it, so the backward scan ends fast.
    */
   private isInlineResult(chatId: string, toolId: string) {
+    return INLINE_TOOL_KINDS.has(this.getToolKind(chatId, toolId) ?? "")
+  }
+
+  private getToolKind(chatId: string, toolId: string) {
     const entries = this.getTranscriptEntries(chatId)
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index]!
       if (entry.kind === "tool_call" && entry.tool.toolId === toolId) {
-        return INLINE_TOOL_KINDS.has(entry.tool.toolKind)
+        return entry.tool.toolKind
       }
     }
-    return false
+    return undefined
   }
 
   private dropTranscriptCaches(chatId: string) {
@@ -2210,7 +2214,10 @@ export class EventStore {
     const entries = this.getTranscriptEntries(chatId)
     const start = Math.max(0, Math.min(fromIndex, entries.length))
     return {
-      messages: cloneTranscriptEntriesForClient(start === 0 ? entries : entries.slice(start)),
+      messages: cloneTranscriptEntriesForClient(
+        start === 0 ? entries : entries.slice(start),
+        (toolId) => this.getToolKind(chatId, toolId),
+      ),
       startIndex: start,
       readAnchor: this.getChatReadAnchor(chatId),
       outline: this.getTranscriptOutline(chatId, entries),

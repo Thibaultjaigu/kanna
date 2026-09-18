@@ -8,6 +8,8 @@ import { asNumber, asRecord, asString } from "../shared/json"
 import { normalizeToolCall } from "../shared/tools"
 import type { HarnessEvent, HarnessTurn } from "./harness-types"
 import { AsyncQueue } from "./async-queue"
+import type { KannaToolHost } from "./kanna-tools"
+import { createCursorKannaTools } from "./cursor-kanna-tools"
 import { timestamped } from "./transcript"
 
 /**
@@ -44,6 +46,7 @@ export interface CursorChildProcess {
 export type SpawnCursorAgent = (args: { cwd: string; argv: string[] }) => CursorChildProcess
 
 export interface StartCursorTurnArgs {
+  customTools?: KannaToolHost
   cwd: string
   content: string
   /** Concrete model id to spawn, e.g. "composer-2.5" or "composer-2.5-fast". */
@@ -155,7 +158,9 @@ function extractCursorTool(toolCall: unknown): {
       if (k.endsWith("ToolCall")) {
         const inner = asRecord(v)
         return {
-          rawName: k.slice(0, -"ToolCall".length),
+          rawName: k === "mcpToolCall"
+            ? String(inner?.name ?? inner?.toolName ?? asRecord(inner?.args)?.toolName ?? asRecord(inner?.args)?.name ?? "mcp")
+            : k.slice(0, -"ToolCall".length),
           args: asRecord(inner?.args) ?? {},
           result: inner?.result,
         }
@@ -383,7 +388,15 @@ export class CursorCliManager {
       argv.push("--resume", args.sessionToken)
     }
 
-    const child = this.spawnProcess({ cwd: args.cwd, argv })
+    const customTools = args.customTools ? await createCursorKannaTools(args.customTools) : undefined
+    if (customTools) argv.push("--plugin-dir", customTools.directory, "--approve-mcps")
+    let child: CursorChildProcess
+    try {
+      child = this.spawnProcess({ cwd: args.cwd, argv })
+    } catch (error) {
+      customTools?.close()
+      throw error
+    }
     const queue = new AsyncQueue<HarnessEvent>()
 
     let sawResult = false
@@ -393,6 +406,7 @@ export class CursorCliManager {
     const finalize = (code: number | null) => {
       if (finished) return
       finished = true
+      customTools?.close()
       if (!sawResult) {
         const detail = clarifyCursorAuthError(stderr.trim()) || `cursor-agent exited with code ${code ?? "unknown"}`
         queue.push({
@@ -442,6 +456,7 @@ export class CursorCliManager {
       provider: "cursor",
       stream: queue,
       interrupt: async () => {
+        customTools?.close()
         try {
           child.kill("SIGINT")
         } catch {
@@ -449,6 +464,7 @@ export class CursorCliManager {
         }
       },
       close: () => {
+        customTools?.close()
         try {
           child.kill()
         } catch {

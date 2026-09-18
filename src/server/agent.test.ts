@@ -2824,3 +2824,56 @@ function createFakeStore(options?: {
     },
   }
 }
+
+describe("shared display tool lifecycle", () => {
+  for (const provider of ["claude", "codex", "cursor", "pi"] as const) {
+    test(`${provider} displays charts and attachments through the shared host`, async () => {
+      const events = new AsyncEventQueue<any>()
+      let host: import("./kanna-tools").KannaToolHost | undefined
+      const capture = (args: { customTools?: import("./kanna-tools").KannaToolHost }) => { host = args.customTools }
+      const manager = {
+        async startSession(args: { customTools?: import("./kanna-tools").KannaToolHost }) { capture(args) },
+        async startTurn(args: { customTools?: import("./kanna-tools").KannaToolHost }): Promise<HarnessTurn> {
+          if (args.customTools) capture(args)
+          return { provider, stream: events, interrupt: async () => { events.close() }, close: () => { events.close() } }
+        },
+      }
+      const store = createFakeStore()
+      const coordinator = new AgentCoordinator({
+        store: store as never,
+        onStateChange: () => {},
+        codexManager: manager as never,
+        cursorManager: manager as never,
+        piManager: manager as never,
+        resolvePiConnection: async () => ({ provider: "openai", baseUrl: "https://example.invalid", apiKey: "test" }),
+        generateTitle: async () => ({ title: "Tool test", usedFallback: false, failureMessage: null }),
+        startClaudeSession: async (args) => {
+          capture(args)
+          return {
+            provider: "claude", stream: events,
+            interrupt: async () => { events.close() }, close: () => { events.close() },
+            sendPrompt: async () => {}, setModel: async () => {}, setPermissionMode: async () => {},
+          }
+        },
+      })
+      await coordinator.send({ type: "chat.send", chatId: "chat-1", provider, content: "Test tools", model: "test-model" })
+      expect(host).toBeDefined()
+      try {
+        const chart = await host!.execute("show_chart", {
+          title: "Sales", description: "Sales by month", type: "bar", data: [{ month: "Jan", sales: 10 }],
+        })
+        expect(chart).toMatchObject({ structuredContent: { displayed: true } })
+        const attachments = await host!.execute("send_attachments", {
+          description: "Report", attachments: [{ url: "https://example.com/report.pdf" }],
+        })
+        expect(attachments).toMatchObject({ structuredContent: { displayed: true } })
+        expect(coordinator.getPendingTool("chat-1")).toBeNull()
+        expect(store.messages.filter(entry => entry.kind === "tool_call")).toHaveLength(2)
+        expect(store.messages.filter(entry => entry.kind === "tool_result")).toHaveLength(2)
+      } finally {
+        await coordinator.cancel("chat-1")
+        events.close()
+      }
+    })
+  }
+})

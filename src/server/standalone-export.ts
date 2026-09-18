@@ -198,9 +198,10 @@ async function prepareStandaloneMessages(
     // a request against a server that is not there.
     if (message.kind === "tool_result" && Array.isArray(message.content)) {
       for (const block of message.content as Array<{ type?: unknown; url?: unknown }>) {
-        if (!block || typeof block !== "object" || block.type !== "image" || typeof block.url !== "string" || !block.url) {
+        if (!block || typeof block !== "object" || (block.type !== "image" && block.type !== "attachment") || typeof block.url !== "string" || !block.url) {
           continue
         }
+        if (/^https?:\/\//.test(block.url)) continue
         totalAttachmentCount += 1
         const sourcePath = args.attachmentMode === "metadata" ? null : args.resolveMediaPath(block.url)
         if (!sourcePath || !(await args.pathExists(sourcePath))) {

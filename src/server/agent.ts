@@ -17,6 +17,8 @@ import type {
 import { normalizeToolCall } from "../shared/tools"
 import type { ClientCommand } from "../shared/protocol"
 import { AsyncQueue } from "./async-queue"
+import { KannaToolRuntime, KannaToolEventFilter, type KannaToolHost } from "./kanna-tools"
+import { createClaudeKannaTools } from "./kanna-tool-adapters"
 import { EventStore } from "./event-store"
 import { STRUCTURED_RESULT_TOOL_KINDS } from "./events"
 import type { AnalyticsReporter } from "./analytics"
@@ -111,6 +113,8 @@ interface PendingToolRequest {
   toolUseId: string
   tool: NormalizedToolCall & { toolKind: "ask_user_question" | "exit_plan_mode" }
   resolve: (result: unknown) => void
+  resultOwner?: "tool"
+  validateResult?: (result: unknown) => void
 }
 
 function normalizePreviewText(text: string) {
@@ -140,6 +144,7 @@ function getToolRequestPreview(tool: PendingToolRequest["tool"]) {
 }
 
 interface ActiveTurn {
+  customTools?: KannaToolRuntime
   chatId: string
   provider: AgentProvider
   turn: HarnessTurn
@@ -229,6 +234,7 @@ interface AgentCoordinatorArgs {
     autoPlan: boolean
     sessionToken: string | null
     forkSession: boolean
+    customTools?: KannaToolHost
     onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
     onRateLimitEvent?: (info: ClaudeRateLimitInfoRaw) => void
   }) => Promise<ClaudeSessionHandle>
@@ -737,6 +743,7 @@ async function startClaudeSession(args: {
   autoPlan: boolean
   sessionToken: string | null
   forkSession: boolean
+  customTools?: KannaToolHost
   onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
   onRateLimitEvent?: (info: ClaudeRateLimitInfoRaw) => void
 }): Promise<ClaudeSessionHandle> {
@@ -808,6 +815,9 @@ async function startClaudeSession(args: {
       forkSession: args.forkSession,
       permissionMode: args.planMode ? "plan" : "acceptEdits",
       canUseTool,
+      ...(args.customTools ? {
+        mcpServers: { kanna: createClaudeKannaTools(args.customTools) },
+      } : {}),
       tools: claudeToolset(args.autoPlan),
       // By default the SDK forwards only a subagent's tool calls. Its text
       // (what it is doing, and its final report) completes the nested view
@@ -1457,21 +1467,28 @@ export class AgentCoordinator {
       void this.generateTitleInBackground(args.chatId, args.content, project.localPath, optimisticTitle ?? "New Chat")
     }
 
-    const onToolRequest = async (request: HarnessToolRequest): Promise<unknown> => {
-      const active = this.activeTurns.get(args.chatId)
-      if (!active) {
-        throw new Error("Chat turn ended unexpectedly")
-      }
-
-      return await new Promise<unknown>((resolve) => {
-        active.pendingTool = {
-          toolUseId: request.tool.toolId,
-          tool: request.tool,
-          resolve,
+    const onToolRequest = (request: HarnessToolRequest) => this.requestToolInput(args.chatId, request)
+    let markToolsReady!: () => void
+    const toolsReady = new Promise<void>((resolve) => { markToolsReady = resolve })
+    const customTools: KannaToolHost = {
+      execute: async (name, input, signal) => {
+        await toolsReady
+        const active = this.activeTurns.get(args.chatId)
+        if (!active || active.cancelRequested) {
+          return { content: [{ type: "text", text: "Chat turn ended" }], isError: true }
         }
-        active.status = "waiting_for_user"
-        this.emitStateChange(args.chatId)
-      })
+        active.customTools ??= new KannaToolRuntime({
+          chatId: args.chatId,
+          cwd: project.localPath,
+          dataDir: this.store.dataDir,
+          emit: async (entry) => {
+            await this.store.appendMessage(args.chatId, entry)
+            this.emitStateChange(args.chatId)
+          },
+          requestInput: (request, callSignal) => this.requestToolInput(args.chatId, request, callSignal),
+        })
+        return active.customTools.execute(name, input, signal)
+      },
     }
 
     // Wire-only injections. The transcript above stores the user's typed text
@@ -1525,6 +1542,7 @@ export class AgentCoordinator {
         sessionToken: chat.pendingForkSessionToken ?? chat.sessionToken,
         forkSession: Boolean(chat.pendingForkSessionToken),
         onToolRequest,
+        customTools,
       })
     } else if (args.provider === "cursor") {
       // Refresh the model catalog off the turn's critical path if a previous
@@ -1546,6 +1564,7 @@ export class AgentCoordinator {
       // Cursor cannot fork (see canForkChat), so a turn always resumes its own session.
       turn = await this.cursorManager.startTurn({
         cwd: project.localPath,
+        customTools,
         content: cursorContent,
         model: args.model,
         sessionToken: chat.sessionToken,
@@ -1557,6 +1576,7 @@ export class AgentCoordinator {
       turn = await this.piManager.startTurn({
         chatId: args.chatId,
         cwd: project.localPath,
+        customTools,
         content: buildPromptText(wireContent, args.attachments),
         model: args.model,
         effort: normalizePiModelOptions(undefined, args.effort).reasoningEffort,
@@ -1568,6 +1588,7 @@ export class AgentCoordinator {
       const started = await this.codexManager.startSession({
         chatId: args.chatId,
         cwd: project.localPath,
+        customTools,
         model: args.model,
         serviceTier: args.serviceTier,
         sessionToken: chat.sessionToken,
@@ -1609,6 +1630,7 @@ export class AgentCoordinator {
       cancelRecorded: false,
     }
     this.activeTurns.set(args.chatId, active)
+    markToolsReady()
     this.emitStateChange(args.chatId, { immediate: active.status === "starting" })
 
     if (turn.getAccountInfo) {
@@ -1675,6 +1697,7 @@ export class AgentCoordinator {
     autoPlan: boolean
     sessionToken: string | null
     forkSession: boolean
+    customTools?: KannaToolHost
     onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
   }): Promise<HarnessTurn> {
     let session = this.claudeSessions.get(args.chatId)
@@ -1705,6 +1728,7 @@ export class AgentCoordinator {
         sessionToken: args.sessionToken,
         forkSession: args.forkSession,
         onToolRequest: args.onToolRequest,
+        customTools: args.customTools,
         onRateLimitEvent: (info) => this.onClaudeRateLimit?.(info),
       })
       this.refreshClaudeModelCatalog(started)
@@ -2100,6 +2124,7 @@ export class AgentCoordinator {
   }
 
   private async runClaudeSession(session: ClaudeSessionState) {
+    const customToolEvents = new KannaToolEventFilter()
     try {
       for await (const event of session.session.stream) {
         if (event.type === "session_token" && event.sessionToken) {
@@ -2109,7 +2134,7 @@ export class AgentCoordinator {
           continue
         }
 
-        if (!event.entry) continue
+        if (!event.entry || customToolEvents.skip(event.entry)) continue
 
         // After an escape/cancel or steer, the SDK ends the cancelled turn
         // with a result of subtype error_during_execution (is_error, usually
@@ -2193,6 +2218,7 @@ export class AgentCoordinator {
           } else if (!active.cancelRequested) {
             await this.store.recordTurnFinished(session.chatId)
           }
+          active.customTools?.abort()
           this.activeTurns.delete(session.chatId)
           if (!active.cancelRequested) {
             await this.maybeStartNextQueuedMessage(session.chatId)
@@ -2227,6 +2253,7 @@ export class AgentCoordinator {
       }
       const active = this.activeTurns.get(session.chatId)
       if (active?.provider === "claude") {
+        active.customTools?.abort()
         if (active.cancelRequested && !active.cancelRecorded) {
           await this.store.recordTurnCancelled(session.chatId)
         }
@@ -2261,6 +2288,7 @@ export class AgentCoordinator {
   }
 
   private async runTurn(active: ActiveTurn) {
+    const customToolEvents = new KannaToolEventFilter()
     try {
       for await (const event of active.turn.stream) {
         // Once cancelled, stop processing further stream events.
@@ -2280,11 +2308,11 @@ export class AgentCoordinator {
           continue
         }
 
-        if (!event.entry) continue
+        if (!event.entry || customToolEvents.skip(event.entry)) continue
         await this.store.appendMessage(active.chatId, event.entry)
 
         if (event.entry.kind === "system_init") {
-          active.status = "running"
+          active.status = active.pendingTool ? "waiting_for_user" : "running"
         }
 
         if (event.entry.kind === "result") {
@@ -2325,6 +2353,7 @@ export class AgentCoordinator {
       if (active.cancelRequested && !active.cancelRecorded) {
         await this.store.recordTurnCancelled(active.chatId)
       }
+      active.customTools?.abort()
       active.turn.close()
       // Only remove if we're still the active turn for this chat.
       // We may have already been removed by result handling or cancel(),
@@ -2424,8 +2453,9 @@ export class AgentCoordinator {
 
     const pendingTool = active.pendingTool
     active.pendingTool = null
+    active.customTools?.abort()
 
-    if (pendingTool) {
+    if (pendingTool && pendingTool.resultOwner !== "tool") {
       const result = discardedToolResult(pendingTool.tool)
       await this.store.appendMessage(
         chatId,
@@ -2469,6 +2499,37 @@ export class AgentCoordinator {
     active.turn.close()
   }
 
+  private async requestToolInput(chatId: string, request: HarnessToolRequest, signal?: AbortSignal): Promise<unknown> {
+    const active = this.activeTurns.get(chatId)
+    if (!active || active.cancelRequested) throw new Error("Chat turn ended")
+    signal?.throwIfAborted()
+    if (active.pendingTool) throw new Error("Another tool is waiting for user input")
+    return new Promise<unknown>((resolve) => {
+      const pending: PendingToolRequest = {
+        toolUseId: request.tool.toolId,
+        tool: request.tool,
+        resultOwner: request.resultOwner,
+        validateResult: request.validateResult,
+        resolve: (result) => {
+          signal?.removeEventListener("abort", abort)
+          resolve(result)
+        },
+      }
+      const abort = () => {
+        if (active.pendingTool === pending) {
+          active.pendingTool = null
+          active.status = "running"
+          this.emitStateChange(chatId)
+        }
+        pending.resolve(discardedToolResult(pending.tool))
+      }
+      signal?.addEventListener("abort", abort, { once: true })
+      active.pendingTool = pending
+      active.status = "waiting_for_user"
+      this.emitStateChange(chatId)
+    })
+  }
+
   async respondTool(command: Extract<ClientCommand, { type: "chat.respondTool" }>) {
     const active = this.activeTurns.get(command.chatId)
     if (!active || !active.pendingTool) {
@@ -2479,15 +2540,18 @@ export class AgentCoordinator {
     if (pending.toolUseId !== command.toolUseId) {
       throw new Error("Tool response does not match active request")
     }
+    pending.validateResult?.(command.result)
 
-    await this.store.appendMessage(
-      command.chatId,
-      timestamped({
-        kind: "tool_result",
-        toolId: command.toolUseId,
-        content: command.result,
-      })
-    )
+    if (pending.resultOwner !== "tool") {
+      await this.store.appendMessage(
+        command.chatId,
+        timestamped({
+          kind: "tool_result",
+          toolId: command.toolUseId,
+          content: command.result,
+        })
+      )
+    }
 
     active.pendingTool = null
     active.status = "running"

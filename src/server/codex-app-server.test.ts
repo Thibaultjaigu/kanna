@@ -2379,3 +2379,34 @@ describe("CodexAppServerManager", () => {
     expect(resultEntry?.result).toBe("usage limit reached: resets at 5pm")
   })
 })
+
+describe("Codex shared tools", () => {
+  for (const method of ["thread/start", "thread/resume", "thread/fork"] as const) {
+    test(`registers the chat MCP server on ${method}`, async () => {
+      let config: any
+      const process = new FakeCodexProcess((message, child) => {
+        if (message.method === "initialize") child.writeServerMessage({ id: message.id, result: {} })
+        if (message.method === method) {
+          config = message.params.config["mcp_servers.kanna"]
+          child.writeServerMessage({ id: message.id, result: { thread: { id: "thread-tools" } } })
+        }
+      })
+      const manager = new CodexAppServerManager({ spawnProcess: () => process as never })
+      try {
+        await manager.startSession({
+          chatId: "tools", cwd: "/repo", model: "gpt-5.4",
+          sessionToken: method === "thread/resume" ? "existing" : null,
+          pendingForkSessionToken: method === "thread/fork" ? "parent" : null,
+          customTools: { execute: async () => ({ content: [{ type: "text", text: "ok" }] }) },
+        })
+        expect(config.url).toStartWith("http://127.0.0.1:")
+        expect(config.tool_timeout_sec).toBeGreaterThan(3600)
+        expect((await fetch(config.url)).status).toBe(401)
+        manager.stopSession("tools")
+        await expect(fetch(config.url)).rejects.toThrow()
+      } finally {
+        manager.stopAll()
+      }
+    })
+  }
+})

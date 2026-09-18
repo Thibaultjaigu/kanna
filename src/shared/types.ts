@@ -1652,6 +1652,9 @@ export interface SubagentTaskToolCall
 export interface McpGenericToolCall
   extends ToolCallBase<"mcp_generic", { server: string; tool: string; payload?: Record<string, unknown> }> { }
 
+export interface DisplayToolCall
+  extends ToolCallBase<"display", { payload: Record<string, unknown> }> { }
+
 export interface UnknownToolCall
   extends ToolCallBase<"unknown_tool", { payload?: Record<string, unknown> }> { }
 
@@ -1671,6 +1674,7 @@ export type NormalizedToolCall =
   | SubagentTaskToolCall
   | McpGenericToolCall
   | UnknownToolCall
+  | DisplayToolCall
 
 export interface ToolResultEntry extends TranscriptEntryBase {
   kind: "tool_result"

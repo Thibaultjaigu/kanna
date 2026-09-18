@@ -950,6 +950,9 @@ async function handleTranscriptMediaContent(req: Request, url: URL, store: Event
   return new Response(file, {
     headers: {
       "Content-Type": file.type || "application/octet-stream",
+      "X-Content-Type-Options": "nosniff",
+      ...(!/^(image\/(png|jpeg|gif|webp|avif)|video\/(mp4|webm|quicktime|ogg))$/.test(file.type)
+        ? { "Content-Disposition": "attachment", "Content-Security-Policy": "sandbox; default-src 'none'" } : {}),
       "Cache-Control": "private, max-age=31536000, immutable",
     },
   })

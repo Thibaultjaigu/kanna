@@ -477,6 +477,17 @@
     background-color: hsl(var(--muted-foreground) / 0.3);
   }
 
+  /* Attachment rows show their scrollbar thumb only while the card is hovered.
+     Both forms are needed: browsers that support scrollbar-color ignore the
+     ::-webkit-scrollbar rules above. */
+  .group:not(:hover) > .attachments-scroller {
+    scrollbar-color: transparent transparent;
+  }
+
+  .group:not(:hover) > .attachments-scroller::-webkit-scrollbar-thumb {
+    background-color: transparent;
+  }
+
   /* Hide scrollbar utility */
   .scrollbar-hide {
     -ms-overflow-style: none;
