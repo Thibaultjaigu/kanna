@@ -8,6 +8,22 @@ import { TranscriptMarkdown } from "./shared"
 import { createMarkdownComponents, markdownComponents, OpenLocalLinkProvider } from "./shared"
 
 describe("markdownComponents", () => {
+  test("exports recognize absolute chat links against the source origin, not the viewer", () => {
+    const html = renderToStaticMarkup(
+      <TranscriptRenderOptionsProvider value={{ localLinkMode: "text", sourceOrigin: "http://kanna.example:5174" }}>
+        <TranscriptMarkdown text={[
+          "[Source chat](http://kanna.example:5174/chat/abc-123)",
+          "[External chat](https://other.example/chat/abc-123)",
+          "[Docs](https://docs.example/guide)",
+        ].join("\n\n")} />
+      </TranscriptRenderOptionsProvider>
+    )
+    expect(html).toContain("Source chat</span>")
+    expect(html).not.toContain('href="http://kanna.example:5174/chat/abc-123"')
+    expect(html).toContain('href="https://other.example/chat/abc-123"')
+    expect(html).toContain('href="https://docs.example/guide"')
+  })
+
   test("renders chat references as same-page router links", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>

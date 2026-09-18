@@ -347,7 +347,10 @@ export function createMarkdownComponents(options?: {
       const onOpenLocalLink = options?.onOpenLocalLink ?? contextOpenLocalLink
       const renderOptions = useTranscriptRenderOptions()
       const inRouter = useInRouterContext()
-      const chatLink = parseChatLink(href, typeof window === "undefined" ? undefined : window.location.origin)
+      const chatOrigin = renderOptions.localLinkMode === "text"
+        ? renderOptions.sourceOrigin ?? undefined
+        : typeof window === "undefined" ? undefined : window.location.origin
+      const chatLink = parseChatLink(href, chatOrigin)
       if (chatLink) {
         const className = "transition-all underline decoration-2 text-logo decoration-logo/50 hover:text-logo/70"
         // Standalone exports have no Kanna router to resolve a chat against.
