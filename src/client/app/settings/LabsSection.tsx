@@ -92,7 +92,7 @@ export function LabsSection({
           }
         >
           <div className="flex flex-wrap items-center gap-2">
-            {onNightly ? (
+            {onNightly && nightly?.status !== "available" ? (
               <SettingsHeaderButton
                 onClick={() => { void checkForUpdates({ force: true }) }}
                 disabled={isUpdating || nightly?.status === "checking"}
