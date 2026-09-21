@@ -9,7 +9,7 @@ export function DisplayToolMessage({ message }: { message: ProcessedToolCall }) 
   // Older cached updates can lack the result body even though the server has it.
   const fetchedResult = useToolPayload(message.resultTrimmed ? message.resultEntryId : undefined)
   const rawResult = fetchedResult?.kind === "tool_result" ? fetchedResult.content : message.rawResult
-  if (!message.resultEntryId || (message.resultTrimmed && !fetchedResult)) return <p className="text-sm text-muted-foreground">Preparing {message.toolName === "show_chart" ? "chart" : "attachments"}...</p>
+  if (!message.resultEntryId || (message.resultTrimmed && !fetchedResult)) return <p className="text-sm text-muted-foreground">{message.toolName === "show_chart" ? "Preparing chart" : message.toolName === "generate_images" ? "Generating images" : "Preparing attachments"}...</p>
   if (message.isError) return <p role="alert" className="text-sm text-destructive">{errorText(rawResult)}</p>
   if (message.toolKind !== "display") return null
   if (message.toolName === "show_chart") return <ChartTool payload={message.input.payload as unknown as ChartToolPayload} />

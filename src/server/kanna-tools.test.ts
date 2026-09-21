@@ -55,7 +55,7 @@ describe("shared Kanna display tools", () => {
     ])
   })
   test("replaces demo tools and keeps chart data available in transcript headers", async () => {
-    expect(KANNA_TOOL_NAMES).toEqual(["show_chart", "send_attachments"])
+    expect(KANNA_TOOL_NAMES).toEqual(["show_chart", "send_attachments", "generate_images"])
     const { runtime, entries } = setup()
     expect(await runtime.execute("show_chart", chart)).toMatchObject({ structuredContent: { displayed: true } })
     expect(entries.map(entry => entry.kind)).toEqual(["tool_call", "tool_result"])

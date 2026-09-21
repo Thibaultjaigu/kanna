@@ -43,3 +43,6 @@ export function isDisplayUrl(value: string): boolean {
   if (/^\/api\/chats\/[^/]+\/media\/[^/]+$/.test(value) || /^\.\/attachments\/[^/]+$/.test(value)) return true
   try { const url = new URL(value); return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password } catch { return false }
 }
+
+/** Tools whose result is a list of attachments. They all render through the same attachment card. */
+export const ATTACHMENT_TOOL_NAMES: readonly string[] = ["send_attachments", "generate_images"]

@@ -33,6 +33,40 @@ export function attachmentKind(mime: string): DisplayAttachment["kind"] {
   return "file"
 }
 
+/**
+ * Copies a local file into the chat's media storage and describes it for the transcript.
+ * Every tool that shows local files goes through here, so the files stay available
+ * after the source changes and render through the same attachment card.
+ */
+export async function storeLocalAttachment(
+  source: string,
+  context: { chatId: string; dataDir?: string },
+): Promise<{ attachment: DisplayAttachment; destination: string }> {
+  if (!context.dataDir) throw new Error("Chat media storage is unavailable.")
+  const handle = await open(source, constants.O_RDONLY | constants.O_NONBLOCK)
+  let mimeType: string
+  let size: number
+  try {
+    const info = await handle.stat()
+    if (!info.isFile()) throw new Error("Attachments must be files.")
+    if (info.size > 100 * 1024 * 1024) throw new Error("Attachments must be 100 MB or smaller.")
+    size = info.size
+    const header = Buffer.alloc(Math.min(size, 8192))
+    await handle.read(header, 0, header.length, 0)
+    mimeType = (await fileTypeFromBuffer(header).catch(() => undefined))?.mime ?? Bun.file(source).type ?? "application/octet-stream"
+  } finally { await handle.close() }
+  const name = path.basename(source)
+  const storedName = `attachment-${crypto.randomUUID()}-${name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120)}`
+  const dir = getTranscriptMediaDir(context.dataDir, context.chatId)
+  await mkdir(dir, { recursive: true })
+  const destination = path.join(dir, storedName)
+  await copyFile(source, destination)
+  return {
+    destination,
+    attachment: { type: "attachment", url: buildTranscriptMediaUrl(context.chatId, storedName), name, kind: attachmentKind(mimeType), mimeType, size },
+  }
+}
+
 export const DISPLAY_TOOLS: readonly KannaToolDefinition[] = [
   {
     name: "show_chart",
@@ -69,28 +103,9 @@ export const DISPLAY_TOOLS: readonly KannaToolDefinition[] = [
             resolved.push({ type: "attachment", url: url.href, name, kind, mimeType, size: null })
             continue
           }
-          if (!context.dataDir) throw new Error("Chat media storage is unavailable.")
-          const source = path.resolve(context.cwd, item.path!)
-          const handle = await open(source, constants.O_RDONLY | constants.O_NONBLOCK)
-          let mimeType: string
-          let size: number
-          try {
-            const info = await handle.stat()
-            if (!info.isFile()) throw new Error("Attachments must be files.")
-            if (info.size > 100 * 1024 * 1024) throw new Error("Attachments must be 100 MB or smaller.")
-            size = info.size
-            const header = Buffer.alloc(Math.min(size, 8192))
-            await handle.read(header, 0, header.length, 0)
-            mimeType = (await fileTypeFromBuffer(header).catch(() => undefined))?.mime ?? Bun.file(source).type ?? "application/octet-stream"
-          } finally { await handle.close() }
-          const name = path.basename(source)
-          const storedName = `attachment-${crypto.randomUUID()}-${name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120)}`
-          const dir = getTranscriptMediaDir(context.dataDir, context.chatId)
-          await mkdir(dir, { recursive: true })
-          const destination = path.join(dir, storedName)
-          copied.push(destination)
-          await copyFile(source, destination)
-          resolved.push({ type: "attachment", url: buildTranscriptMediaUrl(context.chatId, storedName), name, kind: attachmentKind(mimeType), mimeType, size })
+          const stored = await storeLocalAttachment(path.resolve(context.cwd, item.path!), context)
+          copied.push(stored.destination)
+          resolved.push(stored.attachment)
         }
         context.signal.throwIfAborted()
         return {

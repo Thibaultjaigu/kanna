@@ -4,6 +4,7 @@ import { normalizeToolCall } from "../shared/tools"
 import type { HarnessToolRequest } from "./harness-types"
 import { timestamped } from "./transcript"
 import { DISPLAY_TOOLS } from "./kanna-display-tools"
+import { GENERATE_IMAGES_TOOL } from "./kanna-image-tools"
 
 export interface KannaToolResult {
   [key: string]: unknown
@@ -29,7 +30,7 @@ export interface KannaToolDefinition {
 }
 
 // Add tools here. Every provider registers the same definitions and calls the same handlers.
-export const KANNA_TOOLS: readonly KannaToolDefinition[] = DISPLAY_TOOLS
+export const KANNA_TOOLS: readonly KannaToolDefinition[] = [...DISPLAY_TOOLS, GENERATE_IMAGES_TOOL]
 
 export const KANNA_TOOL_NAMES = KANNA_TOOLS.map((tool) => tool.name)
 
