@@ -8,7 +8,7 @@ import type { TranscriptEntry } from "../../../shared/types"
 import { AttachmentsCard, DisplayToolMessage } from "./DisplayToolMessage"
 import { ToolPayloadProvider } from "./tool-payload-context"
 import { csvCell } from "./ChartTool"
-import { resolveChartKeys, type ChartToolPayload } from "../../../shared/display-tools"
+import { displayAttachments, resolveChartKeys, type ChartToolPayload } from "../../../shared/display-tools"
 
 test("display tools render outside collapsed groups with chart and attachment cards", () => {
   const entries: TranscriptEntry[] = [
@@ -25,7 +25,8 @@ test("display tools render outside collapsed groups with chart and attachment ca
   expect(html).toContain("Download CSV")
   expect(html).toContain("Expand chart")
   expect(html).toContain('src="https://example.com/chart.png"')
-  expect(html).toContain("Sales chart")
+  expect(html).not.toContain("Sales chart")
+  expect(html).toContain('alt="chart.png"')
 })
 
 test("attachments render videos and ordinary files without embedding documents", () => {
@@ -36,6 +37,20 @@ test("attachments render videos and ordinary files without embedding documents",
   expect(html).toContain("<video")
   expect(html).toContain('href="https://example.com/report.html"')
   expect(html).not.toContain("<iframe")
+})
+
+test("old attachment descriptions stay hidden while all files still render", () => {
+  const attachments = displayAttachments([
+    { type: "attachment", url: "https://example.com/photo.png", name: "photo.png", kind: "image", caption: "Old image caption" },
+    { type: "attachment", url: "https://example.com/movie.mp4", name: "movie.mp4", kind: "video", caption: "Old video caption" },
+    { type: "attachment", url: "https://example.com/report.pdf", name: "report.pdf", kind: "file", caption: "Old file caption", description: "Old description" },
+  ])
+  const html = renderToStaticMarkup(<AttachmentsCard attachments={attachments} />)
+  expect(html).not.toContain("Old")
+  expect(html).not.toContain("figcaption")
+  for (const attachment of attachments) expect(html).toContain(attachment.url)
+  expect(html).toContain('alt="photo.png"')
+  expect(html).toContain('aria-label="movie.mp4"')
 })
 
 test("cached trimmed attachment results render from fetched payloads", () => {

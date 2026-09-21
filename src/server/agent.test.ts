@@ -2864,7 +2864,7 @@ describe("shared display tool lifecycle", () => {
         })
         expect(chart).toMatchObject({ structuredContent: { displayed: true } })
         const attachments = await host!.execute("send_attachments", {
-          description: "Report", attachments: [{ url: "https://example.com/report.pdf" }],
+          attachments: [{ url: "https://example.com/report.pdf" }],
         })
         expect(attachments).toMatchObject({ structuredContent: { displayed: true } })
         expect(coordinator.getPendingTool("chat-1")).toBeNull()

@@ -101,7 +101,7 @@ export function AttachmentFileCard({
       <button
         type="button"
         onClick={onClick}
-        className="flex w-[200px] items-center gap-2 rounded-xl border border-border bg-background/85 p-1 pr-3 text-left transition-colors hover:bg-accent/50"
+        className="flex w-[200px] items-center gap-2 rounded-xl border border-border bg-muted dark:bg-card p-1 pr-3 text-left transition-colors hover:border-muted-foreground/50"
       >
         <div className="flex min-h-10 min-w-10 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
           <Icon className="size-5" />

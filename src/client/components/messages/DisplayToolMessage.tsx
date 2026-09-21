@@ -4,7 +4,6 @@ import { ChartTool } from "./ChartTool"
 import { displayAttachments, type ChartToolPayload, type DisplayAttachment } from "../../../shared/display-tools"
 import type { ProcessedToolCall } from "./types"
 import { useToolPayload } from "./tool-payload-context"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip"
 
 export function DisplayToolMessage({ message }: { message: ProcessedToolCall }) {
   // Older cached updates can lack the result body even though the server has it.
@@ -48,43 +47,34 @@ export function AttachmentsCard({ attachments }: { attachments: DisplayAttachmen
     return () => observer.disconnect()
   }, [])
   return (
-    // The export viewer has no app-level TooltipProvider, so the card brings its own.
-    <TooltipProvider delayDuration={200}>
-      {/* The negative margin cancels the padding, which lines the first image up with the text and gives its shadow room. The scrollbar thumb shows only on hover (index.css). */}
       <div className="group relative -m-2 w-[calc(100%+1rem)] min-w-0 overflow-hidden" aria-label="Attachments">
         {/* The scrollbar keeps its space and only its thumb goes transparent. Removing it would change the row height on hover. */}
         <div ref={scrollerRef} onScroll={measure} className="attachments-scroller w-full snap-x scroll-px-2 overflow-x-auto">
           <div ref={contentRef} className="flex w-max min-w-full gap-2 p-2">
             {attachments.map((attachment, index) => {
               const failed = broken.has(attachment.url)
-              const mediaClass = "block h-56 w-full rounded-[10px] border border-border bg-muted object-contain"
+              const mediaClass = "block h-56 w-full rounded-[10px] border border-border bg-muted dark:bg-card object-contain"
               const imagePreview = attachment.kind === "image" && !failed
               const onError = () => setBroken(current => new Set(current).add(attachment.url))
               const imageLink = (
                 <a href={attachment.url} target="_blank" rel="noreferrer noopener" className="block" aria-label={`Open ${attachment.name}`}>
                   {/* Load on mount because the image's dimensions determine the preview width. Every image has the same height. Only a panorama wider than the cap is cropped. */}
-                  <img src={attachment.url} alt={attachment.caption || attachment.name} referrerPolicy="no-referrer" className="block h-56 w-auto max-w-[32rem] rounded-[10px] object-cover shadow-md" onError={onError} />
+                  <img src={attachment.url} alt={attachment.name} referrerPolicy="no-referrer" className="block h-56 w-auto max-w-[32rem] rounded-[10px] object-cover shadow-md" onError={onError} />
                 </a>
               )
               return (
                 <figure key={`${attachment.url}-${index}`} className={imagePreview ? "m-0 flex w-fit shrink-0 snap-start flex-col items-start gap-1" : multiple ? "m-0 flex w-80 max-w-full shrink-0 snap-start flex-col gap-1" : "m-0 flex w-full min-w-0 max-w-lg flex-col gap-1"}>
                   {imagePreview ? (
-                    attachment.caption ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>{imageLink}</TooltipTrigger>
-                        <TooltipContent className="max-w-80">{attachment.caption}</TooltipContent>
-                      </Tooltip>
-                    ) : imageLink
+                    imageLink
                   ) : attachment.kind === "video" && !failed ? (
-                    <video src={attachment.url} controls preload="metadata" className={mediaClass} onError={onError} aria-label={attachment.caption || attachment.name} />
+                    <video src={attachment.url} controls preload="metadata" className={mediaClass} onError={onError} aria-label={attachment.name} />
                   ) : (
-                    <a href={attachment.url} target="_blank" rel="noreferrer noopener" className="flex w-64 max-w-full items-center gap-3 rounded-[10px] border border-border p-3 text-sm hover:bg-muted">
+                    <a href={attachment.url} target="_blank" rel="noreferrer noopener" className="flex w-64 max-w-full items-center gap-3 rounded-[10px] border border-border bg-muted dark:bg-card p-3 text-sm hover:border-muted-foreground/50">
                       <FileText className="size-5 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
                       <ArrowUpRight className="size-4 shrink-0" />
                     </a>
                   )}
-                  {attachment.caption && !imagePreview && <figcaption className="max-w-80 text-xs text-muted-foreground">{attachment.caption}</figcaption>}
                   {failed && <span className="text-xs text-muted-foreground">Preview unavailable. Open the file to view it.</span>}
                 </figure>
               )
@@ -96,6 +86,5 @@ export function AttachmentsCard({ attachments }: { attachments: DisplayAttachmen
           <span key={side} aria-hidden="true" className={`pointer-events-none absolute top-0 w-px bg-border transition-opacity ${side} ${visible ? "opacity-100" : "opacity-0"}`} style={{ bottom: scrollbarHeight }} />
         ))}
       </div>
-    </TooltipProvider>
   )
 }

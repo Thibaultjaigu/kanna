@@ -19,11 +19,9 @@ const chartSchema = z.strictObject({
 })
 
 const attachmentSchema = z.strictObject({
-  description: z.string(),
   attachments: z.array(z.strictObject({
     path: z.string().min(1).optional().describe("Local file path, absolute or relative to the project directory."),
     url: z.string().url().optional().describe("HTTP or HTTPS URL. Provide path or url, not both."),
-    caption: z.string().optional(),
     kind: z.enum(["image", "video", "file"]).optional().describe("For web URLs without a file extension, specify the media kind. Local files use their detected type."),
   })).min(1).max(24),
 })
@@ -52,7 +50,7 @@ export const DISPLAY_TOOLS: readonly KannaToolDefinition[] = [
   },
   {
     name: "send_attachments",
-    description: "Show images, videos, and file links in the chat. Supply local paths or HTTP/HTTPS URLs, with optional captions. Local files are copied into the chat so they remain available after the source changes. Images and videos appear inline; other files appear as download links.",
+    description: "Show images, videos, and file links in the chat. Supply local paths or HTTP/HTTPS URLs. Local files are copied into the chat so they remain available after the source changes. Images and videos appear inline; other files appear as download links.",
     schema: attachmentSchema,
     async execute(input, context) {
       const { attachments } = attachmentSchema.parse(input)
@@ -68,7 +66,7 @@ export const DISPLAY_TOOLS: readonly KannaToolDefinition[] = [
             const name = decodeURIComponent(url.pathname.split("/").pop() || "attachment")
             const mimeType = Bun.file(name).type || "application/octet-stream"
             const kind = mimeType === "image/svg+xml" ? "file" : item.kind ?? attachmentKind(mimeType)
-            resolved.push({ type: "attachment", url: url.href, name, kind, caption: item.caption, mimeType, size: null })
+            resolved.push({ type: "attachment", url: url.href, name, kind, mimeType, size: null })
             continue
           }
           if (!context.dataDir) throw new Error("Chat media storage is unavailable.")
@@ -92,7 +90,7 @@ export const DISPLAY_TOOLS: readonly KannaToolDefinition[] = [
           const destination = path.join(dir, storedName)
           copied.push(destination)
           await copyFile(source, destination)
-          resolved.push({ type: "attachment", url: buildTranscriptMediaUrl(context.chatId, storedName), name, kind: attachmentKind(mimeType), caption: item.caption, mimeType, size })
+          resolved.push({ type: "attachment", url: buildTranscriptMediaUrl(context.chatId, storedName), name, kind: attachmentKind(mimeType), mimeType, size })
         }
         context.signal.throwIfAborted()
         return {

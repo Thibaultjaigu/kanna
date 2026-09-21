@@ -28,7 +28,6 @@ export interface DisplayAttachment {
   url: string
   name: string
   kind: "image" | "video" | "file"
-  caption?: string
   mimeType: string
   size: number | null
 }

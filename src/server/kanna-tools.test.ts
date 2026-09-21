@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import type { TranscriptEntry } from "../shared/types"
-import { KannaToolRuntime, KannaToolEventFilter, KANNA_TOOL_NAMES, type KannaToolDefinition } from "./kanna-tools"
+import { KannaToolRuntime, KannaToolEventFilter, KANNA_TOOL_NAMES, kannaToolSpecs, type KannaToolDefinition } from "./kanna-tools"
 import { createClaudeKannaTools, createPiKannaTools } from "./kanna-tool-adapters"
 import { createKannaMcpServer } from "./kanna-mcp"
 import { parseTranscriptMediaUrl, getTranscriptMediaDir, retargetEntryMediaUrls } from "./transcript-media"
@@ -16,7 +16,7 @@ import { EventStore } from "./event-store"
 import { splitTranscriptEntry } from "./transcript-payloads"
 
 const chart = { title: "Sales", description: "Sales by month", type: "bar", data: [{ month: "Jan", revenue: 10 }, { month: "Feb", revenue: 20 }] }
-const attachments = { description: "Report", attachments: [{ url: "https://example.com/chart.png", caption: "Sales chart" }, { url: "https://example.com/report.pdf" }] }
+const attachments = { attachments: [{ url: "https://example.com/chart.png" }, { url: "https://example.com/report.pdf" }] }
 const inputTool: KannaToolDefinition = {
   name: "test_input", description: "Test input", schema: z.strictObject({}), waitsForUser: true,
   async execute(_input, context) {
@@ -42,6 +42,18 @@ async function until(predicate: () => boolean) {
 }
 
 describe("shared Kanna display tools", () => {
+  test("attachment inputs omit descriptions and captions", async () => {
+    const spec = kannaToolSpecs().find(tool => tool.name === "send_attachments")!
+    expect(Object.keys(spec.inputSchema.properties ?? {})).toEqual(["attachments"])
+    expect(JSON.stringify(spec.inputSchema)).not.toContain('"caption"')
+    const { runtime } = setup()
+    const result = await runtime.execute("send_attachments", attachments)
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent?.attachments).toEqual([
+      { type: "attachment", url: "https://example.com/chart.png", name: "chart.png", kind: "image", mimeType: "image/png", size: null },
+      { type: "attachment", url: "https://example.com/report.pdf", name: "report.pdf", kind: "file", mimeType: "application/pdf", size: null },
+    ])
+  })
   test("replaces demo tools and keeps chart data available in transcript headers", async () => {
     expect(KANNA_TOOL_NAMES).toEqual(["show_chart", "send_attachments"])
     const { runtime, entries } = setup()
@@ -62,19 +74,19 @@ describe("shared Kanna display tools", () => {
     const { runtime, entries } = setup()
     const result = await runtime.execute("send_attachments", attachments)
     expect(result).not.toHaveProperty("transcriptContent")
-    expect(entries[1]).toMatchObject({ content: [{ kind: "image", caption: "Sales chart" }, { kind: "file" }] })
-    expect(await runtime.execute("send_attachments", { description: "Image", attachments: [{ url: "https://example.com/photo?id=1", kind: "image" }] }))
+    expect(entries[1]).toMatchObject({ content: [{ kind: "image" }, { kind: "file" }] })
+    expect(await runtime.execute("send_attachments", { attachments: [{ url: "https://example.com/photo?id=1", kind: "image" }] }))
       .toMatchObject({ structuredContent: { attachments: [{ kind: "image" }] } })
     for (const item of [{ url: "javascript:alert(1)" }, { url: "https://user:password@example.com/a.png" }, {}, { path: "a", url: "https://example.com/a" }]) {
-      expect(await runtime.execute("send_attachments", { description: "test", attachments: [item] })).toMatchObject({ isError: true })
+      expect(await runtime.execute("send_attachments", { attachments: [item] })).toMatchObject({ isError: true })
     }
   })
-  test("copies local files, preserves captions, and retargets forked links", async () => {
+  test("copies local files and retargets forked links", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "kanna-attachments-"))
     try {
       await writeFile(path.join(dir, "report.txt"), "Saved report")
       const { runtime, entries } = setup(dir)
-      expect(await runtime.execute("send_attachments", { description: "Report", attachments: [{ path: "report.txt", caption: "Report caption" }] })).not.toHaveProperty("isError")
+      expect(await runtime.execute("send_attachments", { attachments: [{ path: "report.txt" }] })).not.toHaveProperty("isError")
       const result = entries[1]!
       if (result.kind !== "tool_result") throw new Error("Expected result")
       const [attachment] = result.content as Array<{ url: string }>
