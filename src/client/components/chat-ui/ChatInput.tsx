@@ -1199,25 +1199,35 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             includeMode={showModePicker}
             className="max-w-[840px] mx-auto"
           />
-          <div className="flex items-center gap-2 md:hidden mx-[13px]">
-            <SubagentActivityPill subagents={subagents} />
-            {activeContextWindow ? <ContextWindowMeter usage={activeContextWindow} /> : null}
-          </div>
+          {subagents.length > 0 || activeContextWindow ? (
+            <div className="mx-[13px] flex items-center gap-2 md:hidden">
+              <SubagentActivityPill subagents={subagents} />
+              {activeContextWindow ? <ContextWindowMeter usage={activeContextWindow} /> : null}
+            </div>
+          ) : null}
           <div className={controlsScrollSpacer} />
         </div>
 
-        {subagents.length > 0 ? (
+        {/* One flex row, not two independently positioned boxes.
+            Positioned separately, each was centred against its own line box —
+            and because the pill is text-xs while the dial inherits a larger
+            size, those boxes differ in height, so -translate-y-1/2 landed them
+            at different offsets. `items-center` makes the two agree by
+            construction, at whatever size either one grows into.
+            right-[17px] is where the dial already sat: right-[29px] pulled back
+            by translate-x-1/2 of its own 24px. */}
+        {subagents.length > 0 || activeContextWindow ? (
           <div className={cn(
-            "absolute top-1/2 -translate-y-1/2 hidden md:block",
-            activeContextWindow ? "right-[52px]" : "right-[22px]"
+            "absolute inset-y-0 right-[17px] hidden items-center gap-2 md:flex",
+            // Mirror the parent's own padding so this spans its *content* box.
+            // top-1/2 centred on the padded box instead, and the padding is
+            // asymmetric when standalone (pt-3 pb-5) — which put the dial 4px
+            // below the controls it sits beside. Matching the padding centres
+            // on the row itself, in both modes.
+            isStandalone ? "pt-3 pb-5" : "py-3"
           )}>
             <SubagentActivityPill subagents={subagents} />
-          </div>
-        ) : null}
-
-        {activeContextWindow ? (
-          <div className="absolute right-[29px] top-1/2 translate-x-1/2 -translate-y-1/2 hidden md:block">
-            <ContextWindowMeter usage={activeContextWindow} />
+            {activeContextWindow ? <ContextWindowMeter usage={activeContextWindow} /> : null}
           </div>
         ) : null}
       </div>
