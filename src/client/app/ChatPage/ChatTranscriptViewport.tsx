@@ -12,6 +12,7 @@ import { DrainingIndicator } from "../../components/messages/DrainingIndicator"
 import { QueuedUserMessage } from "../../components/messages/QueuedUserMessage"
 import { OpenLocalLinkProvider, type OpenLocalLinkTarget } from "../../components/messages/shared"
 import { ProcessingMessage } from "../../components/messages/ProcessingMessage"
+import { SubagentWaitingMessage } from "../../components/messages/SubagentWaitingMessage"
 import { ContextMenu, ContextMenuTrigger } from "../../components/ui/context-menu"
 import { OpenExternalContextMenuContent, openContextMenuFromButton } from "../../components/open-external-menu"
 import { TRANSCRIPT_PADDING_BOTTOM_OFFSET } from "../kannaStateHelpers"
@@ -49,7 +50,7 @@ import {
   EMPTY_STATE_TEXT,
 } from "./utils"
 import type { EditorOpenSettings, EditorPreset, OpenExternalAction, TerminalPreset } from "../../../shared/protocol"
-import type { TranscriptOutlineEntry } from "../../../shared/types"
+import type { SubagentActivity, TranscriptOutlineEntry } from "../../../shared/types"
 /**
  * How close to the bottom counts as "at the end", as a fraction of viewport
  * height.
@@ -62,6 +63,8 @@ import type { TranscriptOutlineEntry } from "../../../shared/types"
  * scroller measures in; a ratio silently read as 0.05px meant "at the end" was
  * never true and following never engaged.
  */
+const EMPTY_SUBAGENTS: readonly SubagentActivity[] = []
+
 const AT_END_THRESHOLD_PX = 48
 
 /**
@@ -251,6 +254,8 @@ interface ChatTranscriptViewportProps {
   localPath: string | null | undefined
   latestToolIds: KannaState["latestToolIds"]
   isProcessing: boolean
+  /** Live delegated work. Absent in the export viewer, which is a static copy. */
+  subagents?: readonly SubagentActivity[]
   runtimeStatus: string | null
   isDraining: boolean
   commandError: string | null
@@ -457,6 +462,7 @@ const TranscriptScrollerBody = memo(function TranscriptScrollerBody({
   localPath,
   latestToolIds,
   isProcessing,
+  subagents = EMPTY_SUBAGENTS,
   runtimeStatus,
   isDraining,
   commandError,
@@ -1036,7 +1042,12 @@ const TranscriptScrollerBody = memo(function TranscriptScrollerBody({
   // would sit 8px left of every tool icon above it.
   const listFooter = (
     <div className="mx-auto w-full max-w-[816px] px-2">
-      {isProcessing ? <ProcessingMessage status={runtimeStatus ?? undefined} /> : null}
+      {/* Takes the slot ProcessingMessage vacates: while the turn runs its
+          status leads, and once it ends the delegated work still speaks. Never
+          both, or the footer says the same thing twice. */}
+      {isProcessing
+        ? <ProcessingMessage status={runtimeStatus ?? undefined} />
+        : <SubagentWaitingMessage subagents={subagents} />}
       {queuedMessages.map((message) => (
         <QueuedUserMessage
           key={message.id}

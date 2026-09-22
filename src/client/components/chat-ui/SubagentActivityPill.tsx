@@ -57,7 +57,9 @@ export function SubagentActivityPill({ subagents }: { subagents: readonly Subage
           type="button"
           aria-label={running > 0 ? `${running} agent${running === 1 ? "" : "s"} running` : "Agents this turn"}
           className={cn(
-            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors",
+            // h-6 matches ContextWindowMeter's 24px dial, so the pill and the
+            // gauge sit on one line without nudging the composer's rhythm.
+            "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs transition-colors",
             running > 0
               ? "border-primary/30 bg-primary/10 text-primary"
               : "border-border text-muted-foreground hover:text-foreground"
