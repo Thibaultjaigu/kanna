@@ -2877,3 +2877,82 @@ describe("shared display tool lifecycle", () => {
     })
   }
 })
+
+describe("subagent activity", () => {
+  function coordinator() {
+    const store = createFakeStore()
+    return new AgentCoordinator({ store: store as never, onStateChange: () => {} })
+  }
+
+  test("tracks an agent from start to stop", () => {
+    const agent = coordinator()
+    agent.applySubagentActivity("chat-1", { kind: "started", id: "a1", type: "subagent", label: "code-reviewer" }, 1000)
+
+    expect(agent.getSubagents("chat-1")).toEqual([
+      { id: "a1", type: "subagent", label: "code-reviewer", status: "running", startedAt: 1000 },
+    ])
+    expect(agent.getChatIdsAwaitingSubagents().has("chat-1")).toBe(true)
+
+    agent.applySubagentActivity("chat-1", { kind: "stopped", id: "a1", failed: false }, 4000)
+    expect(agent.getSubagents("chat-1")[0]).toMatchObject({ status: "completed", endedAt: 4000 })
+    expect(agent.getChatIdsAwaitingSubagents().has("chat-1")).toBe(false)
+  })
+
+  test("the Stop sweep closes an agent whose stop hook never landed", () => {
+    // The whole feature rests on a count you can believe. A killed or crashed
+    // agent never fires SubagentStop, and without the sweep it would pin the
+    // chat in "waiting" forever — the stuck-spinner bug in a new costume.
+    const agent = coordinator()
+    agent.applySubagentActivity("chat-1", { kind: "started", id: "gone", type: "subagent", label: "lost" }, 1000)
+    agent.applySubagentActivity("chat-1", { kind: "started", id: "live", type: "subagent", label: "still going" }, 1000)
+
+    agent.applySubagentActivity(
+      "chat-1",
+      { kind: "inFlight", ids: [{ id: "live", type: "subagent", label: "still going" }] },
+      5000
+    )
+
+    const byId = new Map(agent.getSubagents("chat-1").map((entry) => [entry.id, entry]))
+    expect(byId.get("gone")).toMatchObject({ status: "completed", endedAt: 5000 })
+    expect(byId.get("live")).toMatchObject({ status: "running" })
+    expect(agent.getChatIdsAwaitingSubagents().has("chat-1")).toBe(true)
+  })
+
+  test("the sweep discovers background work that never fired a start hook", () => {
+    // A backgrounded shell or a monitor is registered on the session without a
+    // SubagentStart, so Stop is the first time we hear of it. The turn is not
+    // done, and the count has to say so.
+    const agent = coordinator()
+    agent.applySubagentActivity(
+      "chat-1",
+      { kind: "inFlight", ids: [{ id: "sh1", type: "shell", label: "bun test" }] },
+      2000
+    )
+
+    expect(agent.getSubagents("chat-1")).toEqual([
+      { id: "sh1", type: "shell", label: "bun test", status: "running", startedAt: 2000 },
+    ])
+  })
+
+  test("an empty sweep ends the turn", () => {
+    const agent = coordinator()
+    agent.applySubagentActivity("chat-1", { kind: "started", id: "a1", type: "subagent", label: "x" }, 1000)
+    agent.applySubagentActivity("chat-1", { kind: "inFlight", ids: [] }, 3000)
+
+    expect(agent.getChatIdsAwaitingSubagents().size).toBe(0)
+    expect(agent.getSubagents("chat-1")[0]).toMatchObject({ status: "completed", endedAt: 3000 })
+  })
+
+  test("a late stop does not reopen or re-stamp a closed agent", () => {
+    const agent = coordinator()
+    agent.applySubagentActivity("chat-1", { kind: "started", id: "a1", type: "subagent", label: "x" }, 1000)
+    agent.applySubagentActivity("chat-1", { kind: "inFlight", ids: [] }, 3000)
+    agent.applySubagentActivity("chat-1", { kind: "stopped", id: "a1", failed: true }, 9000)
+
+    expect(agent.getSubagents("chat-1")[0]).toMatchObject({ status: "completed", endedAt: 3000 })
+  })
+
+  test("chats without delegated work stay empty", () => {
+    expect(coordinator().getSubagents("chat-1")).toEqual([])
+  })
+})

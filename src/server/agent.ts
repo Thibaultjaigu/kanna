@@ -1,4 +1,15 @@
-import { query, type CanUseTool, type PermissionResult, type Query, type SDKUserMessage, type SlashCommand } from "@anthropic-ai/claude-agent-sdk"
+import {
+  query,
+  type BackgroundTaskSummary,
+  type CanUseTool,
+  type HookCallback,
+  type HookCallbackMatcher,
+  type HookEvent,
+  type PermissionResult,
+  type Query,
+  type SDKUserMessage,
+  type SlashCommand,
+} from "@anthropic-ai/claude-agent-sdk"
 import { homedir } from "node:os"
 import type {
   AgentProvider,
@@ -12,6 +23,7 @@ import type {
   PendingToolSnapshot,
   KannaStatus,
   QueuedChatMessage,
+  SubagentActivity,
   TranscriptEntry,
 } from "../shared/types"
 import { normalizeToolCall } from "../shared/tools"
@@ -237,6 +249,7 @@ interface AgentCoordinatorArgs {
     customTools?: KannaToolHost
     onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
     onRateLimitEvent?: (info: ClaudeRateLimitInfoRaw) => void
+    onSubagentActivity?: (update: SubagentActivityUpdate) => void
   }) => Promise<ClaudeSessionHandle>
   /**
    * Probe whether a provider's native session artifact still exists on disk.
@@ -733,6 +746,66 @@ async function* createClaudeHarnessStream(
   }
 }
 
+/**
+ * What the SDK's subagent hooks tell us, normalized.
+ *
+ * `started`/`stopped` name one agent. `inFlight` is the authoritative sweep the
+ * Stop hook carries: everything still running at the moment the main agent went
+ * quiet. The sweep is what makes the count trustworthy — a `stopped` hook that
+ * never fires (crash, kill, a session torn down mid-flight) would otherwise
+ * strand an agent as "running" forever, and the whole point of this feature is
+ * a count you can believe.
+ */
+export type SubagentActivityUpdate =
+  | { kind: "started"; id: string; type: string; label: string }
+  | { kind: "stopped"; id: string; failed: boolean }
+  | { kind: "inFlight"; ids: readonly { id: string; type: string; label: string }[] }
+
+/**
+ * SDK hooks that report delegated work.
+ *
+ * `SubagentStart`/`SubagentStop` cover Task-spawned agents. `Stop` fires when
+ * the main agent stops and carries `background_tasks` — running/pending and
+ * backgrounded work registered on the session, which is the only signal that
+ * distinguishes "this turn is done" from "the main agent is done talking but
+ * the work it kicked off is still going".
+ *
+ * Every hook returns `{}`: these observe, they never block or steer the model.
+ */
+function subagentHooks(
+  onActivity: (update: SubagentActivityUpdate) => void
+): Partial<Record<HookEvent, HookCallbackMatcher[]>> {
+  const one = (hook: HookCallback): HookCallbackMatcher[] => [{ hooks: [hook] }]
+
+  const sweep = (input: { background_tasks?: BackgroundTaskSummary[] }) => {
+    onActivity({
+      kind: "inFlight",
+      ids: (input.background_tasks ?? []).map((task) => ({
+        id: task.id,
+        type: task.type,
+        label: task.agent_type || task.name || task.command || task.description || task.type,
+      })),
+    })
+  }
+
+  return {
+    SubagentStart: one(async (input) => {
+      if (input.hook_event_name !== "SubagentStart") return {}
+      onActivity({ kind: "started", id: input.agent_id, type: "subagent", label: input.agent_type })
+      return {}
+    }),
+    SubagentStop: one(async (input) => {
+      if (input.hook_event_name !== "SubagentStop") return {}
+      onActivity({ kind: "stopped", id: input.agent_id, failed: false })
+      return {}
+    }),
+    Stop: one(async (input) => {
+      if (input.hook_event_name !== "Stop") return {}
+      sweep(input)
+      return {}
+    }),
+  }
+}
 
 async function startClaudeSession(args: {
   localPath: string
@@ -746,6 +819,11 @@ async function startClaudeSession(args: {
   customTools?: KannaToolHost
   onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
   onRateLimitEvent?: (info: ClaudeRateLimitInfoRaw) => void
+  /**
+   * Delegated work starting, finishing, or — on Stop — the authoritative list
+   * of what is still in flight. Driven by SDK hooks; see `subagentHooks`.
+   */
+  onSubagentActivity?: (update: SubagentActivityUpdate) => void
 }): Promise<ClaudeSessionHandle> {
   const canUseTool: CanUseTool = async (toolName, input, options) => {
     if (toolName !== "AskUserQuestion" && toolName !== "ExitPlanMode") {
@@ -819,6 +897,7 @@ async function startClaudeSession(args: {
         mcpServers: { kanna: createClaudeKannaTools(args.customTools) },
       } : {}),
       tools: claudeToolset(args.autoPlan),
+      ...(args.onSubagentActivity ? { hooks: subagentHooks(args.onSubagentActivity) } : {}),
       // By default the SDK forwards only a subagent's tool calls. Its text
       // (what it is doing, and its final report) completes the nested view
       // under the Agent row; the normalizer stamps it with parent_tool_use_id
@@ -930,6 +1009,12 @@ export class AgentCoordinator {
   private codexModelCatalogRefresh: Promise<void> | null = null
   readonly activeTurns = new Map<string, ActiveTurn>()
   readonly drainingStreams = new Map<string, { turn: HarnessTurn }>()
+  /**
+   * Delegated work per chat, keyed by the provider's agent id. Finished entries
+   * are kept so the panel can still say what just ran; they are cleared when
+   * the next turn starts, not when they finish.
+   */
+  private readonly subagents = new Map<string, Map<string, SubagentActivity>>()
   readonly claudeSessions = new Map<string, ClaudeSessionState>()
 
   constructor(args: AgentCoordinatorArgs) {
@@ -1034,6 +1119,112 @@ export class AgentCoordinator {
 
   getDrainingChatIds(): Set<string> {
     return new Set(this.drainingStreams.keys())
+  }
+
+  /** Delegated work for a chat, oldest first. Empty when it has spawned none. */
+  getSubagents(chatId: string): SubagentActivity[] {
+    const byId = this.subagents.get(chatId)
+    if (!byId) return []
+    return [...byId.values()].sort((a, b) => a.startedAt - b.startedAt)
+  }
+
+  /** Chats with delegated work still running — the turn is not over for these. */
+  getChatIdsAwaitingSubagents(): Set<string> {
+    const waiting = new Set<string>()
+    for (const [chatId, byId] of this.subagents) {
+      for (const activity of byId.values()) {
+        if (activity.status === "running") {
+          waiting.add(chatId)
+          break
+        }
+      }
+    }
+    return waiting
+  }
+
+  /**
+   * Fold one hook report into the registry.
+   *
+   * `inFlight` is a sweep, not an increment: anything running that the sweep
+   * does not name has ended without its stop hook landing, so it is closed
+   * here. That is what keeps a crashed or killed agent from pinning the chat
+   * in "waiting" forever.
+   */
+  applySubagentActivity(chatId: string, update: SubagentActivityUpdate, now = Date.now()) {
+    let byId = this.subagents.get(chatId)
+    if (!byId) {
+      byId = new Map()
+      this.subagents.set(chatId, byId)
+    }
+
+    if (update.kind === "started") {
+      byId.set(update.id, {
+        id: update.id,
+        type: update.type,
+        label: update.label,
+        status: "running",
+        startedAt: now,
+      })
+    } else if (update.kind === "stopped") {
+      const existing = byId.get(update.id)
+      if (!existing || existing.status !== "running") return
+      byId.set(update.id, { ...existing, status: update.failed ? "failed" : "completed", endedAt: now })
+    } else {
+      const named = new Set(update.ids.map((task) => task.id))
+      for (const task of update.ids) {
+        const existing = byId.get(task.id)
+        // The sweep also *discovers* work: a backgrounded shell or a monitor
+        // never fires SubagentStart, so Stop is the first we hear of it.
+        if (!existing) {
+          byId.set(task.id, { id: task.id, type: task.type, label: task.label, status: "running", startedAt: now })
+        } else if (existing.status !== "running") {
+          byId.set(task.id, { ...existing, status: "running", endedAt: undefined })
+        }
+      }
+      for (const [id, activity] of byId) {
+        if (activity.status === "running" && !named.has(id)) {
+          byId.set(id, { ...activity, status: "completed", endedAt: now })
+        }
+      }
+    }
+
+    this.emitStateChange(chatId)
+  }
+
+  /**
+   * Derive delegated work from the transcript, for providers with no hook
+   * equivalent (Codex, Grok — both normalize their spawn call to
+   * `subagent_task`). Weaker than Claude's hooks: a subagent is "running" from
+   * its tool call until its tool result, which is all these providers report.
+   *
+   * Claude is deliberately excluded. Its hooks key on `agent_id` while the tool
+   * call keys on `toolId`, so running both would list every agent twice.
+   */
+  private trackSubagentFromEntry(chatId: string, entry: TranscriptEntry) {
+    if (this.activeTurns.get(chatId)?.provider === "claude") return
+    if (entry.kind === "tool_call" && entry.tool.toolKind === "subagent_task") {
+      const input = entry.tool.input as { subagentType?: unknown; description?: unknown }
+      const label = typeof input.subagentType === "string" && input.subagentType
+        ? input.subagentType
+        : typeof input.description === "string" && input.description
+          ? input.description
+          : "Agent"
+      this.applySubagentActivity(chatId, { kind: "started", id: entry.tool.toolId, type: "subagent", label })
+      return
+    }
+    if (entry.kind === "tool_result" && this.subagents.get(chatId)?.has(entry.toolId)) {
+      this.applySubagentActivity(chatId, { kind: "stopped", id: entry.toolId, failed: Boolean(entry.isError) })
+    }
+  }
+
+  /** Drop the previous turn's record so the panel reflects this turn only. */
+  private clearFinishedSubagents(chatId: string) {
+    const byId = this.subagents.get(chatId)
+    if (!byId) return
+    for (const [id, activity] of byId) {
+      if (activity.status !== "running") byId.delete(id)
+    }
+    if (byId.size === 0) this.subagents.delete(chatId)
   }
 
   private emitStateChange(chatId?: string, options?: { immediate?: boolean }) {
@@ -1462,6 +1653,10 @@ export class AgentCoordinator {
       await this.store.appendMessage(args.chatId, userPromptEntry)
     }
     await this.store.recordTurnStarted(args.chatId, args.model)
+    // Last turn's finished agents stop being interesting the moment a new one
+    // starts. Anything still running is deliberately kept: that is precisely
+    // the work this turn may still be waiting on.
+    this.clearFinishedSubagents(args.chatId)
 
     if (shouldGenerateTitle) {
       void this.generateTitleInBackground(args.chatId, args.content, project.localPath, optimisticTitle ?? "New Chat")
@@ -1730,6 +1925,7 @@ export class AgentCoordinator {
         onToolRequest: args.onToolRequest,
         customTools: args.customTools,
         onRateLimitEvent: (info) => this.onClaudeRateLimit?.(info),
+        onSubagentActivity: (update) => this.applySubagentActivity(args.chatId, update),
       })
       this.refreshClaudeModelCatalog(started)
 
@@ -2310,6 +2506,7 @@ export class AgentCoordinator {
 
         if (!event.entry || customToolEvents.skip(event.entry)) continue
         await this.store.appendMessage(active.chatId, event.entry)
+        this.trackSubagentFromEntry(active.chatId, event.entry)
 
         if (event.entry.kind === "system_init") {
           active.status = active.pendingTool ? "waiting_for_user" : "running"

@@ -10,6 +10,7 @@ import {
   type ModelOptions,
   type ProviderCatalogEntry,
   resolveClaudeContextWindowMaxTokens,
+  type SubagentActivity,
 } from "../../../shared/types"
 import { Button } from "../ui/button"
 import { Textarea } from "../ui/textarea"
@@ -32,6 +33,7 @@ import { shouldSteerSubmit } from "../../../shared/submit-mode"
 import { SignInDialog } from "../auth/SignInDialog"
 import { ChatPreferenceControls } from "./ChatPreferenceControls"
 import { ContextWindowMeter } from "./ContextWindowMeter"
+import { SubagentActivityPill } from "./SubagentActivityPill"
 import { AttachmentFileCard, AttachmentImageCard } from "../messages/AttachmentCard"
 import { AttachmentPreviewModal } from "../messages/AttachmentPreviewModal"
 import { classifyAttachmentPreview } from "../messages/attachmentPreview"
@@ -43,6 +45,9 @@ import {
   filterSkillMenuItems,
   getActiveSlashQuery,
 } from "../../lib/skill-menu"
+
+/** Stable default, so a chat with no delegated work doesn't re-render on it. */
+const EMPTY_SUBAGENTS: readonly SubagentActivity[] = []
 
 const MAX_FILES_PER_DROP = 50
 const MAX_CONCURRENT_UPLOADS = 3
@@ -190,6 +195,8 @@ interface Props {
   activeProvider: AgentProvider | null
   availableProviders: ProviderCatalogEntry[]
   contextWindowSnapshot?: ContextWindowSnapshot | null
+  /** Delegated work for this chat; drives the composer activity pill. */
+  subagents?: readonly SubagentActivity[]
   previousPrompt?: string | null
   onEditModels?: () => void
   /** Enumerates the selected harness's invocable skills for the "/" menu. */
@@ -214,6 +221,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   activeProvider,
   availableProviders,
   contextWindowSnapshot = null,
+  subagents = EMPTY_SUBAGENTS,
   previousPrompt = null,
   onEditModels,
   onListSkills,
@@ -1191,13 +1199,21 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             includeMode={showModePicker}
             className="max-w-[840px] mx-auto"
           />
-          {activeContextWindow ? (
-            <div className="flex items-center md:hidden mx-[13px]">
-              <ContextWindowMeter usage={activeContextWindow} />
-            </div>
-          ) : null}
+          <div className="flex items-center gap-2 md:hidden mx-[13px]">
+            <SubagentActivityPill subagents={subagents} />
+            {activeContextWindow ? <ContextWindowMeter usage={activeContextWindow} /> : null}
+          </div>
           <div className={controlsScrollSpacer} />
         </div>
+
+        {subagents.length > 0 ? (
+          <div className={cn(
+            "absolute top-1/2 -translate-y-1/2 hidden md:block",
+            activeContextWindow ? "right-[52px]" : "right-[22px]"
+          )}>
+            <SubagentActivityPill subagents={subagents} />
+          </div>
+        ) : null}
 
         {activeContextWindow ? (
           <div className="absolute right-[29px] top-1/2 translate-x-1/2 -translate-y-1/2 hidden md:block">
