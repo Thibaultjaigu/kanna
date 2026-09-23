@@ -48,6 +48,7 @@ import { createWsRouter, type ClientState } from "./ws-router"
 import { instanceFingerprint } from "./instance"
 import { deleteProjectUpload, inferAttachmentContentType, inferProjectFileContentType, persistProjectUpload } from "./uploads"
 import { getProjectUploadDir } from "./paths"
+import { inheritShellPath } from "./process-utils"
 
 const MAX_UPLOAD_FILES = 50
 const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
@@ -145,6 +146,9 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   const hostname = options.host ?? "127.0.0.1"
   const strictPort = options.strictPort ?? false
   const runtimeProfile = getRuntimeProfile()
+  // Runs alongside the store setup below (~0.5 s for a zsh with nvm) and is
+  // awaited before anything can start an agent.
+  const shellPathReady = inheritShellPath()
   const auth = options.password ? createAuthManager(options.password, { trustProxy: options.trustProxy ?? false }) : null
   const diagnostics = new PerformanceLog(options.dataDir ?? getDataDir(homedir()), undefined, options.update?.version)
   const store = new EventStore(options.dataDir, diagnostics)
@@ -372,6 +376,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
       await router.broadcastSnapshots()
     }
   }
+  await shellPathReady
   // Chats that were mid-turn when Kanna last exited pick up where they left
   // off. Not awaited — each resume starts a harness process, and boot should
   // not wait on them; chained onto the GC sweep so a chat about to be archived
