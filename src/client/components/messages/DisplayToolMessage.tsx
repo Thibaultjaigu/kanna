@@ -24,6 +24,7 @@ function errorText(result: unknown): string {
 export function AttachmentsCard({ attachments }: { attachments: DisplayAttachment[] }) {
   const [broken, setBroken] = useState<Set<string>>(() => new Set())
   const multiple = attachments.length > 1
+  const filesOnly = attachments.every(attachment => attachment.kind === "file")
   const scrollerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const [moreLeft, setMoreLeft] = useState(false)
@@ -50,7 +51,8 @@ export function AttachmentsCard({ attachments }: { attachments: DisplayAttachmen
       <div className="group relative -m-2 w-[calc(100%+1rem)] min-w-0 overflow-hidden" aria-label="Attachments">
         {/* The scrollbar keeps its space and only its thumb goes transparent. Removing it would change the row height on hover. */}
         <div ref={scrollerRef} onScroll={measure} className="attachments-scroller w-full snap-x scroll-px-2 overflow-x-auto">
-          <div ref={contentRef} className="flex w-max min-w-full gap-2 p-2">
+          {/* Images and videos scroll sideways. A row of only files wraps instead, since there is nothing to preview. */}
+          <div ref={contentRef} className={`flex gap-2 p-2 ${filesOnly ? "w-full flex-wrap" : "w-max min-w-full"}`}>
             {attachments.map((attachment, index) => {
               const failed = broken.has(attachment.url)
               const mediaClass = "block h-56 w-full rounded-[10px] border border-border bg-muted dark:bg-card object-contain"
@@ -63,7 +65,7 @@ export function AttachmentsCard({ attachments }: { attachments: DisplayAttachmen
                 </a>
               )
               return (
-                <figure key={`${attachment.url}-${index}`} className={imagePreview ? "m-0 flex w-fit shrink-0 snap-start flex-col items-start gap-1" : multiple ? "m-0 flex w-80 max-w-full shrink-0 snap-start flex-col gap-1" : "m-0 flex w-full min-w-0 max-w-lg flex-col gap-1"}>
+                <figure key={`${attachment.url}-${index}`} className={imagePreview ? "m-0 flex w-fit shrink-0 snap-start flex-col items-start gap-1" : multiple ? "m-0 flex max-w-full shrink-0 snap-start flex-col gap-1" : "m-0 flex w-full min-w-0 max-w-lg flex-col gap-1"}>
                   {imagePreview ? (
                     imageLink
                   ) : attachment.kind === "video" && !failed ? (

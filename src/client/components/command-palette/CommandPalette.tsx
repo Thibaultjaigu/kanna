@@ -60,7 +60,8 @@ import {
   resolveCloneDestination,
   type RepoRef,
 } from "../../lib/project-fs"
-import { filterProjects, getLocalProjectTitle, groupProjectsByRecency } from "../../lib/project-groups"
+import { filterProjects, getLocalProjectTitle, groupProjectsByRecency, groupProjectsForNewChat } from "../../lib/project-groups"
+import { usePendingSendStore } from "../../stores/pendingSendStore"
 import { useRightSidebarStore } from "../../stores/rightSidebarStore"
 import { setFocusMode, useFocusModeEnabled } from "../../stores/focusModeStore"
 import { useSidebarStore } from "../../stores/sidebarStore"
@@ -100,6 +101,7 @@ import { useRepoMetadata } from "./useRepoMetadata"
 /** Window event that opens the command palette from anywhere (e.g. mobile nav). */
 /** Frozen stand-in while the palette is closed — see the selector below. */
 const EMPTY_SIDEBAR_DATA: SidebarData = { projectGroups: [] }
+const EMPTY_SEND_TIMES: Readonly<Record<string, number>> = {}
 
 export const OPEN_COMMAND_PALETTE_EVENT = "kanna:open-command-palette"
 
@@ -270,6 +272,7 @@ export function CommandPalette({ state }: { state: KannaState }) {
   // on each of those pushes, for a list nobody was looking at. Closed, the
   // selector returns one frozen constant, so the store never re-renders this.
   const sidebarData = useSidebarStore((store) => (open ? store.data : EMPTY_SIDEBAR_DATA))
+  const pendingSendTimes = usePendingSendStore((store) => (open ? store.sentAt : EMPTY_SEND_TIMES))
 
   const browser = useDirectoryBrowser(state.socket)
 
@@ -1150,12 +1153,21 @@ export function CommandPalette({ state }: { state: KannaState }) {
       .map((entry) => entry.action)
   }, [page, trimmedQuery])
 
-  // All local projects, grouped by recency exactly like the "/" route.
   const localProjectGroups = useMemo(() => {
     if (page !== "add-project" && page !== "new-thread" && page !== "hide-project") return []
+    if (page === "new-thread") {
+      return groupProjectsForNewChat({
+        projects: state.localProjects?.projects ?? [],
+        projectGroups: sidebarData.projectGroups,
+        currentProjectId: currentChatGroup?.groupKey ?? projectId,
+        search: trimmedQuery,
+        pendingSendTimes,
+        nowMs,
+      })
+    }
     const filtered = filterProjects(state.localProjects?.projects ?? [], trimmedQuery)
     return groupProjectsByRecency(filtered, nowMs)
-  }, [nowMs, page, state.localProjects?.projects, trimmedQuery])
+  }, [currentChatGroup, nowMs, page, pendingSendTimes, projectId, sidebarData.projectGroups, state.localProjects?.projects, trimmedQuery])
 
   // Clone page: fetch the signed-in user's recent repos on entry. The server
   // caches briefly, so repeat opens resolve instantly.
