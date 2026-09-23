@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs"
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync, type Dirent } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 
@@ -309,8 +309,18 @@ export class GrokProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
     const sessionsDir = path.join(homeDir, ".grok", "sessions")
     if (!existsSync(sessionsDir)) return []
 
+    // The grok CLI owns this directory and can delete or rewrite session
+    // folders while we scan. Discovery runs at boot and on refresh for every
+    // provider, so a folder that vanishes mid-scan is skipped, never thrown.
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(sessionsDir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+
     const projects: ProviderDiscoveredProject[] = []
-    for (const entry of readdirSync(sessionsDir, { withFileTypes: true })) {
+    for (const entry of entries) {
       if (!entry.isDirectory()) continue
       let cwd: string
       try {
@@ -321,12 +331,17 @@ export class GrokProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
       if (!path.isAbsolute(cwd)) continue
       const normalizedPath = normalizeExistingDirectory(cwd)
       if (!normalizedPath) continue
-      const stat = statSync(path.join(sessionsDir, entry.name))
+      let modifiedAt: number
+      try {
+        modifiedAt = statSync(path.join(sessionsDir, entry.name)).mtimeMs
+      } catch {
+        continue
+      }
       projects.push({
         provider: this.provider,
         localPath: normalizedPath,
         title: path.basename(normalizedPath) || normalizedPath,
-        modifiedAt: stat.mtimeMs,
+        modifiedAt,
       })
     }
 

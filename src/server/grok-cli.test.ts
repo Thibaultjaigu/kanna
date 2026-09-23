@@ -18,7 +18,7 @@ import {
   readGrokAuthTokenFromFile,
   type GrokChildProcess,
 } from "./grok-cli"
-import type { HarnessEvent } from "./harness-types"
+import type { HarnessEvent, HarnessToolRequest } from "./harness-types"
 
 function transcriptEntries(events: HarnessEvent[]) {
   return events.flatMap((event) => (event.type === "transcript" && event.entry ? [event.entry] : []))
@@ -483,5 +483,97 @@ describe("GrokCliManager.startTurn", () => {
     for await (const _event of turn.stream) { /* drain */ }
     expect(argv).toEqual(expect.arrayContaining(["--permission-mode", "plan"]))
     expect(argv).not.toContain("--always-approve")
+  })
+
+  describe("plan mode approval", () => {
+    // ExitPlanMode as headless grok reports it: the call, its failed result
+    // (nobody to ask), then a normal end of turn.
+    const PLAN_LINES = [
+      `{"type":"tool_call","toolCallId":"plan-1","toolName":"ExitPlanMode","rawInput":{"plan":"1. Add README"},"status":"pending"}`,
+      `{"type":"tool_call_update","toolCallId":"plan-1","status":"failed","content":"no user to approve"}`,
+      `{"type":"end","stopReason":"end_turn","sessionId":"sess-plan"}`,
+    ]
+
+    function fakeGrok(lines: string[]) {
+      return new GrokCliManager({
+        spawnProcess: () => {
+          const stdout = new PassThrough()
+          const closeListeners: Array<(code: number | null) => void> = []
+          queueMicrotask(() => {
+            for (const line of lines) stdout.write(`${line}\n`)
+            stdout.end()
+            // Close after readline has delivered every line, as the real process does.
+            setTimeout(() => { for (const listener of closeListeners) listener(0) }, 10)
+          })
+          return {
+            stdin: new PassThrough(),
+            stdout,
+            stderr: new PassThrough(),
+            kill: () => true,
+            once: (event: "close" | "error", listener: (code: number | null) => void) => {
+              if (event === "close") closeListeners.push(listener)
+              return undefined
+            },
+          } as unknown as GrokChildProcess
+        },
+      })
+    }
+
+    const startArgs = { cwd: "/tmp", content: "plan this", model: "grok-4.6", sessionToken: null, forkSession: false }
+
+    test("parks on the plan: no CLI result for it and no end result until the user answers", async () => {
+      let answer: (value: unknown) => void = () => {}
+      const requested = Promise.withResolvers<HarnessToolRequest>()
+      const turn = await fakeGrok(PLAN_LINES).startTurn({
+        ...startArgs,
+        planMode: true,
+        onToolRequest: (request) => {
+          requested.resolve(request)
+          return new Promise((resolve) => { answer = resolve })
+        },
+      })
+      const events: HarnessEvent[] = []
+      const drained = (async () => { for await (const event of turn.stream) events.push(event) })()
+
+      const request = await requested.promise
+      expect(request.tool.toolKind).toBe("exit_plan_mode")
+      expect(request.tool.toolId).toBe("plan-1")
+      const entries = transcriptEntries(events)
+      expect(entries.some((entry) => entry.kind === "tool_call" && entry.tool.toolKind === "exit_plan_mode")).toBe(true)
+      expect(entries.some((entry) => entry.kind === "tool_result")).toBe(false)
+      expect(entries.some((entry) => entry.kind === "result")).toBe(false)
+      // The session id still lands, so the follow-up turn can resume it.
+      expect(events.some((event) => event.type === "session_token" && event.sessionToken === "sess-plan")).toBe(true)
+
+      answer({ confirmed: true })
+      await drained
+      expect(transcriptEntries(events).some((entry) => entry.kind === "result")).toBe(false)
+    })
+
+    test("a rejected request (turn already gone) closes with the held result", async () => {
+      const turn = await fakeGrok(PLAN_LINES).startTurn({
+        ...startArgs,
+        planMode: true,
+        onToolRequest: async () => { throw new Error("Chat turn ended") },
+      })
+      const events: HarnessEvent[] = []
+      for await (const event of turn.stream) events.push(event)
+      expect(transcriptEntries(events).filter((entry) => entry.kind === "result")).toHaveLength(1)
+    })
+
+    test("outside plan mode the stream passes through untouched", async () => {
+      let asked = false
+      const turn = await fakeGrok(PLAN_LINES).startTurn({
+        ...startArgs,
+        planMode: false,
+        onToolRequest: async () => { asked = true },
+      })
+      const events: HarnessEvent[] = []
+      for await (const event of turn.stream) events.push(event)
+      expect(asked).toBe(false)
+      const entries = transcriptEntries(events)
+      expect(entries.some((entry) => entry.kind === "tool_result")).toBe(true)
+      expect(entries.some((entry) => entry.kind === "result")).toBe(true)
+    })
   })
 })

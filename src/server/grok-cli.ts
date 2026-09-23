@@ -5,10 +5,10 @@ import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 import { createInterface } from "node:readline"
 import type { Readable, Writable } from "node:stream"
-import type { ContextWindowUsageSnapshot, HarnessSkill, TodoItem } from "../shared/types"
+import type { ContextWindowUsageSnapshot, HarnessSkill, NormalizedToolCall, TodoItem } from "../shared/types"
 import { asNumber, asRecord, asString } from "../shared/json"
 import { normalizeToolCall } from "../shared/tools"
-import type { HarnessEvent, HarnessTurn } from "./harness-types"
+import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
 import { AsyncQueue } from "./async-queue"
 import { timestamped } from "./transcript"
 
@@ -60,6 +60,14 @@ export interface StartGrokTurnArgs {
   planMode: boolean
   sessionToken: string | null
   forkSession: boolean
+  /** Plan mode only: parks the turn on the plan approval or question — see startTurn. */
+  onToolRequest?: (request: HarnessToolRequest) => Promise<unknown>
+}
+
+type InteractiveTool = HarnessToolRequest["tool"]
+
+function isInteractiveTool(tool: NormalizedToolCall): tool is InteractiveTool {
+  return tool.toolKind === "exit_plan_mode" || tool.toolKind === "ask_user_question"
 }
 
 export interface GrokModelListEntry {
@@ -794,6 +802,36 @@ export class GrokCliManager {
     let finished = false
     let stderr = ""
 
+    // Headless plan mode has no channel back to the CLI: stdin is closed, so
+    // an ExitPlanMode or AskUserQuestion call can only be recorded, never
+    // answered. Like Codex's plan turns, the answer goes in a follow-up turn
+    // instead. The turn's own success result is held back so the turn stays
+    // active, and at the end it parks on the last such call, which puts the
+    // chat in waiting_for_user with the approval or question card live. The
+    // CLI's own result for that call (it had no one to ask) is dropped, or the
+    // card would render as already answered. The agent's respondTool then
+    // queues the follow-up that resumes this session.
+    const deferToUser = args.planMode && args.onToolRequest ? args.onToolRequest : null
+    let awaitingUser: InteractiveTool | null = null
+    let heldResult: HarnessEvent | null = null
+
+    const emit = (event: HarnessEvent) => {
+      const entry = event.type === "transcript" ? event.entry : undefined
+      if (deferToUser && entry) {
+        if (entry.kind === "tool_call" && isInteractiveTool(entry.tool)) {
+          awaitingUser = entry.tool
+        } else if (entry.kind === "tool_result" && awaitingUser && entry.toolId === awaitingUser.toolId) {
+          return
+        } else if (entry.kind === "result" && awaitingUser && !entry.isError) {
+          sawResult = true
+          heldResult = event
+          return
+        }
+      }
+      if (entry?.kind === "result") sawResult = true
+      queue.push(event)
+    }
+
     const cleanupPrompt = () => {
       void rm(promptDir, { recursive: true, force: true }).catch(() => undefined)
     }
@@ -802,7 +840,21 @@ export class GrokCliManager {
       if (finished) return
       finished = true
       cleanupPrompt()
-      for (const event of coalescer.finish()) queue.push(event)
+      for (const event of coalescer.finish()) emit(event)
+      if (deferToUser && awaitingUser && heldResult) {
+        const held = heldResult
+        // Resolves once the user answers. It rejects if the turn was already
+        // gone, and then the held result closes the turn the ordinary way.
+        void deferToUser({ tool: awaitingUser }).then(
+          () => queue.finish(),
+          () => {
+            queue.push(held)
+            queue.finish()
+          },
+        )
+        return
+      }
+      if (heldResult) queue.push(heldResult)
       if (!sawResult) {
         const detail = stderr.trim() || `grok exited with code ${code ?? "unknown"}`
         queue.push({
@@ -822,12 +874,7 @@ export class GrokCliManager {
     if (child.stdout) {
       const rl = createInterface({ input: child.stdout })
       rl.on("line", (line) => {
-        for (const event of coalescer.push(parseGrokLine(line, args.model))) {
-          if (event.type === "transcript" && event.entry?.kind === "result") {
-            sawResult = true
-          }
-          queue.push(event)
-        }
+        for (const event of coalescer.push(parseGrokLine(line, args.model))) emit(event)
       })
     }
 

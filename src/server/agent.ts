@@ -2,6 +2,7 @@ import { query, type CanUseTool, type PermissionResult, type Query, type SDKUser
 import { homedir } from "node:os"
 import type {
   AgentProvider,
+  AskUserQuestionItem,
   ChatAttachment,
   ChatSkillsSnapshot,
   CodexReasoningEffort,
@@ -373,6 +374,21 @@ export function buildPromptText(content: string, attachments: ChatAttachment[]) 
     trimmed || "Please inspect the attached files.",
     attachmentHint,
   ].join("\n\n").trim()
+}
+
+/**
+ * The user's answers to an AskUserQuestion, as the prompt of a follow-up
+ * turn for harnesses that cannot take the answer mid-turn. Answers are keyed
+ * by question id when the question has one, else by its text.
+ */
+export function formatQuestionAnswersFollowUp(questions: AskUserQuestionItem[], result: unknown) {
+  const answers = asRecord(asRecord(result)?.answers) ?? {}
+  const lines = questions.map((question) => {
+    const raw = (question.id ? answers[question.id] : undefined) ?? answers[question.question]
+    const picked = (Array.isArray(raw) ? raw : raw == null ? [] : [raw]).map(String).filter(Boolean)
+    return `- ${question.question}\n  ${picked.length > 0 ? picked.join(", ") : "(no answer)"}`
+  })
+  return `Here are my answers to your questions:\n\n${lines.join("\n")}`
 }
 
 function discardedToolResult(
@@ -1625,6 +1641,7 @@ export class AgentCoordinator {
         planMode: args.planMode,
         sessionToken: chat.pendingForkSessionToken ?? chat.sessionToken,
         forkSession: Boolean(chat.pendingForkSessionToken),
+        onToolRequest,
       })
     } else if (args.provider === "pi") {
       // A missing connection or session boot failure surfaces as an error
@@ -2529,7 +2546,11 @@ export class AgentCoordinator {
           content: result,
         })
       )
-      if (active.provider === "codex" && pendingTool.tool.toolKind === "exit_plan_mode") {
+      // These adapters hold their stream open until the request resolves.
+      if (
+        (active.provider === "codex" && pendingTool.tool.toolKind === "exit_plan_mode")
+        || active.provider === "grok"
+      ) {
         pendingTool.resolve(result)
       }
     }
@@ -2631,7 +2652,9 @@ export class AgentCoordinator {
         await this.store.appendMessage(command.chatId, timestamped({ kind: "context_cleared" }))
       }
 
-      if (active.provider === "codex") {
+      // Neither can hand the answer back to the running agent, so it goes in
+      // a follow-up turn on the same session (see grok-cli startTurn).
+      if (active.provider === "codex" || active.provider === "grok") {
         active.postToolFollowUp = result.confirmed
           ? {
               content: result.message
@@ -2645,6 +2668,11 @@ export class AgentCoordinator {
                 : "Revise the plan using this feedback.",
               planMode: true,
             }
+      }
+    } else if (pending.tool.toolKind === "ask_user_question" && active.provider === "grok") {
+      active.postToolFollowUp = {
+        content: formatQuestionAnswersFollowUp(pending.tool.input.questions, command.result),
+        planMode: active.planMode,
       }
     }
 
