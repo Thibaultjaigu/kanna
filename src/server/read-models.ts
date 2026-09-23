@@ -10,6 +10,7 @@ import type {
   SidebarChatRow,
   SidebarData,
   SidebarProjectGroup,
+  SubagentActivity,
 } from "../shared/types"
 import type { WorkingTreeProbe } from "./diff-store"
 import type { ProjectRepoLabel } from "./worktree-probe"
@@ -415,7 +416,8 @@ export function deriveChatSnapshot(
   activeStatuses: Map<string, KannaStatus>,
   drainingChatIds: Set<string>,
   chatId: string,
-  getMessages: (chatId: string) => Pick<ChatSnapshot, "messages" | "startIndex" | "readAnchor"> & { outline?: TranscriptOutlineEntry[] }
+  getMessages: (chatId: string) => Pick<ChatSnapshot, "messages" | "startIndex" | "readAnchor"> & { outline?: TranscriptOutlineEntry[] },
+  subagents?: readonly SubagentActivity[]
 ): ChatSnapshot | null {
   const chat = state.chatsById.get(chatId)
   if (!chat || chat.deletedAt) return null
@@ -433,6 +435,7 @@ export function deriveChatSnapshot(
     planMode: chat.planMode,
     autoPlan: chat.autoPlan,
     sessionToken: chat.sessionToken,
+    ...(subagents?.length ? { subagents: [...subagents] } : {}),
   }
 
   const transcript = getMessages(chat.id)

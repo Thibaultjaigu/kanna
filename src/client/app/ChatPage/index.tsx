@@ -36,7 +36,7 @@ import { TERMINAL_TOGGLE_ANIMATION_DURATION_MS } from "../terminalToggleAnimatio
 import { useRightSidebarToggleAnimation } from "../useRightSidebarToggleAnimation"
 import { useStickyChatFocus } from "../useStickyChatFocus"
 import { useTerminalToggleAnimation } from "../useTerminalToggleAnimation"
-import type { AgentProvider, ChatSkillsSnapshot, TranscriptEntry } from "../../../shared/types"
+import type { AgentProvider, ChatSkillsSnapshot, SubagentActivity, TranscriptEntry } from "../../../shared/types"
 import type { KannaState } from "../useKannaState"
 import { getNextMeasuredInputHeight, getTranscriptPaddingBottom } from "../useKannaState"
 import { ChatInputDock } from "./ChatInputDock"
@@ -63,6 +63,7 @@ export {
 
 /** Stable identity so a chat without a snapshot does not re-derive per render. */
 const EMPTY_TRANSCRIPT_ENTRIES: TranscriptEntry[] = []
+const EMPTY_SUBAGENTS: readonly SubagentActivity[] = []
 
 function useEmptyStateTyping(showEmptyState: boolean, activeChatId: string | null) {
   const [typedEmptyStateText, setTypedEmptyStateText] = useState("")
@@ -1097,6 +1098,7 @@ export function ChatPage() {
         activeProvider={state.runtime?.provider ?? null}
         availableProviders={state.availableProviders}
         contextWindowSnapshot={contextWindowSnapshot}
+        subagents={state.runtime?.subagents ?? EMPTY_SUBAGENTS}
         onSubmit={handleChatSubmit}
         onCancel={handleCancel}
         onEditModels={handleEditModels}

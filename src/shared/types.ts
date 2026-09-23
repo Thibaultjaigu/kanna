@@ -2140,6 +2140,27 @@ export type HydratedTranscriptMessage =
   | ({ kind: "unknown"; json: string; id: string; messageId?: string; timestamp: string; hidden?: boolean })
   | ({ id: string; messageId?: string; hidden?: boolean } & HydratedToolCall)
 
+/**
+ * One unit of work a chat is still waiting on after the main agent stopped
+ * talking: a subagent, a backgrounded shell, a monitor, a workflow.
+ *
+ * A turn is not over while any of these is `running`. The main agent's result
+ * arrives as soon as *it* is done, so without this the chat read as finished
+ * while the work it delegated was still going.
+ */
+export interface SubagentActivity {
+  /** The provider's own id: Claude's `agent_id`, or the spawning tool call id. */
+  id: string
+  /** `subagent`, `shell`, `monitor`, `workflow`, … Free-form: providers add kinds. */
+  type: string
+  /** Subagent type name ("code-reviewer") when known, else the task description. */
+  label: string
+  status: "running" | "completed" | "failed"
+  startedAt: number
+  /** Unset while running. */
+  endedAt?: number
+}
+
 export interface ChatRuntime {
   chatId: string
   projectId: string
@@ -2151,6 +2172,12 @@ export interface ChatRuntime {
   planMode: boolean
   autoPlan: boolean
   sessionToken: string | null
+  /**
+   * In-flight and just-finished delegated work, newest last. Omitted when the
+   * chat has never spawned any, so a chat that doesn't delegate costs nothing
+   * on the wire.
+   */
+  subagents?: SubagentActivity[]
 }
 
 export interface ChatSnapshot {
