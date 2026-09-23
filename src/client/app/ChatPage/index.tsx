@@ -1046,7 +1046,6 @@ export function ChatPage() {
           localPath={state.runtime?.localPath}
           latestToolIds={state.latestToolIds}
           isProcessing={state.isProcessing}
-          subagents={state.runtime?.subagents ?? EMPTY_SUBAGENTS}
           runtimeStatus={state.runtimeStatus}
           isDraining={state.isDraining}
           commandError={state.commandError}

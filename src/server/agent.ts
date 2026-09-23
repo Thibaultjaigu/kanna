@@ -1128,20 +1128,6 @@ export class AgentCoordinator {
     return [...byId.values()].sort((a, b) => a.startedAt - b.startedAt)
   }
 
-  /** Chats with delegated work still running — the turn is not over for these. */
-  getChatIdsAwaitingSubagents(): Set<string> {
-    const waiting = new Set<string>()
-    for (const [chatId, byId] of this.subagents) {
-      for (const activity of byId.values()) {
-        if (activity.status === "running") {
-          waiting.add(chatId)
-          break
-        }
-      }
-    }
-    return waiting
-  }
-
   /**
    * Fold one hook report into the registry.
    *

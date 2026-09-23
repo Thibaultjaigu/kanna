@@ -2891,11 +2891,11 @@ describe("subagent activity", () => {
     expect(agent.getSubagents("chat-1")).toEqual([
       { id: "a1", type: "subagent", label: "code-reviewer", status: "running", startedAt: 1000 },
     ])
-    expect(agent.getChatIdsAwaitingSubagents().has("chat-1")).toBe(true)
+    expect(agent.getSubagents("chat-1").some((a) => a.status === "running")).toBe(true)
 
     agent.applySubagentActivity("chat-1", { kind: "stopped", id: "a1", failed: false }, 4000)
     expect(agent.getSubagents("chat-1")[0]).toMatchObject({ status: "completed", endedAt: 4000 })
-    expect(agent.getChatIdsAwaitingSubagents().has("chat-1")).toBe(false)
+    expect(agent.getSubagents("chat-1").some((a) => a.status === "running")).toBe(false)
   })
 
   test("the Stop sweep closes an agent whose stop hook never landed", () => {
@@ -2915,7 +2915,7 @@ describe("subagent activity", () => {
     const byId = new Map(agent.getSubagents("chat-1").map((entry) => [entry.id, entry]))
     expect(byId.get("gone")).toMatchObject({ status: "completed", endedAt: 5000 })
     expect(byId.get("live")).toMatchObject({ status: "running" })
-    expect(agent.getChatIdsAwaitingSubagents().has("chat-1")).toBe(true)
+    expect(agent.getSubagents("chat-1").some((a) => a.status === "running")).toBe(true)
   })
 
   test("the sweep discovers background work that never fired a start hook", () => {
@@ -2939,7 +2939,7 @@ describe("subagent activity", () => {
     agent.applySubagentActivity("chat-1", { kind: "started", id: "a1", type: "subagent", label: "x" }, 1000)
     agent.applySubagentActivity("chat-1", { kind: "inFlight", ids: [] }, 3000)
 
-    expect(agent.getChatIdsAwaitingSubagents().size).toBe(0)
+    expect(agent.getSubagents("chat-1").some((a) => a.status === "running")).toBe(false)
     expect(agent.getSubagents("chat-1")[0]).toMatchObject({ status: "completed", endedAt: 3000 })
   })
 
