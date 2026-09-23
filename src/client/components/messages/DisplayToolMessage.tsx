@@ -65,15 +65,15 @@ export function AttachmentsCard({ attachments }: { attachments: DisplayAttachmen
                 </a>
               )
               return (
-                <figure key={`${attachment.url}-${index}`} className={imagePreview ? "m-0 flex w-fit shrink-0 snap-start flex-col items-start gap-1" : multiple ? "m-0 flex max-w-full shrink-0 snap-start flex-col gap-1" : "m-0 flex w-full min-w-0 max-w-lg flex-col gap-1"}>
+                <figure key={`${attachment.url}-${index}`} className={imagePreview ? "m-0 flex w-fit shrink-0 snap-start flex-col items-start gap-1" : multiple ? "m-0 flex max-w-full shrink-0 snap-start flex-col gap-1" : "m-0 flex max-w-full flex-col gap-1"}>
                   {imagePreview ? (
                     imageLink
                   ) : attachment.kind === "video" && !failed ? (
                     <video src={attachment.url} controls preload="metadata" className={mediaClass} onError={onError} aria-label={attachment.name} />
                   ) : (
-                    <a href={attachment.url} target="_blank" rel="noreferrer noopener" className="flex w-64 max-w-full items-center gap-3 rounded-[10px] border border-border bg-muted dark:bg-card p-3 text-sm hover:border-muted-foreground/50">
+                    <a href={attachment.url} target="_blank" rel="noreferrer noopener" className="flex max-w-80 items-center gap-3 rounded-[10px] border border-border bg-muted dark:bg-card p-3 text-sm hover:border-muted-foreground/50">
                       <FileText className="size-5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+                      <span className="min-w-0 truncate">{attachment.name}</span>
                       <ArrowUpRight className="size-4 shrink-0" />
                     </a>
                   )}
