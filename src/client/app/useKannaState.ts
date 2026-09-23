@@ -695,6 +695,13 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
   }, [optimisticProcessing, optimisticScopeId, runtime?.status])
 
+  // After the ack, the optimistic status holds until a chat snapshot that
+  // arrived after the ack still says idle. The server queues its "running"
+  // push before it acks, so the first push after the ack is the answer. A fixed
+  // grace period used to decide this instead, and it lost to the snapshot on a
+  // new chat (navigate, subscribe, first push), so the indicator blinked out
+  // and back. The fallback only covers a push that never comes.
+  const ackedSnapshotRef = useRef<{ ackedAt: number; snapshot: ChatSnapshot | null } | null>(null)
   useEffect(() => {
     if (!optimisticProcessing?.ackedAt || optimisticProcessing.scopeId !== optimisticScopeId) {
       return
@@ -702,15 +709,20 @@ export function useKannaState(activeChatId: string | null): KannaState {
     if (runtime?.status && runtime.status !== "idle") {
       return
     }
+    const { ackedAt } = optimisticProcessing
+    if (ackedSnapshotRef.current?.ackedAt !== ackedAt) {
+      ackedSnapshotRef.current = { ackedAt, snapshot: activeChatSnapshot }
+    }
+    const heardBack = activeChatSnapshot !== null && activeChatSnapshot !== ackedSnapshotRef.current.snapshot
     const timeoutId = window.setTimeout(() => {
       setOptimisticProcessing((current) => (
-        current?.scopeId === optimisticScopeId && current.ackedAt === optimisticProcessing.ackedAt
+        current?.scopeId === optimisticScopeId && current.ackedAt === ackedAt
           ? null
           : current
       ))
-    }, 300)
+    }, heardBack ? 0 : 5_000)
     return () => window.clearTimeout(timeoutId)
-  }, [optimisticProcessing, optimisticScopeId, runtime?.status])
+  }, [activeChatSnapshot, optimisticProcessing, optimisticScopeId, runtime?.status])
 
   useEffect(() => {
     setOptimisticUserPrompts((current) => {
