@@ -66,6 +66,26 @@ class AsyncEventQueue<T> implements AsyncIterable<T> {
   }
 }
 
+describe("formatQuestionAnswersFollowUp", () => {
+  test("quotes each question with its answer, keyed by id or by text", () => {
+    const text = formatQuestionAnswersFollowUp(
+      [
+        { id: "db", question: "Which database?" },
+        { question: "Add tests?" },
+        { question: "Anything else?" },
+      ],
+      { answers: { db: ["Postgres"], "Add tests?": ["Yes", "Unit only"] } },
+    )
+    expect(text).toBe([
+      "Here are my answers to your questions:",
+      "",
+      "- Which database?\n  Postgres",
+      "- Add tests?\n  Yes, Unit only",
+      "- Anything else?\n  (no answer)",
+    ].join("\n"))
+  })
+})
+
 describe("normalizeClaudeStreamMessage", () => {
   test("normalizes assistant tool calls", () => {
     const entries = normalizeClaudeStreamMessage({
@@ -2877,24 +2897,4 @@ describe("shared display tool lifecycle", () => {
       }
     })
   }
-})
-
-describe("formatQuestionAnswersFollowUp", () => {
-  test("quotes each question with its answer, keyed by id or by text", () => {
-    const text = formatQuestionAnswersFollowUp(
-      [
-        { id: "db", question: "Which database?" },
-        { question: "Add tests?" },
-        { question: "Anything else?" },
-      ],
-      { answers: { db: ["Postgres"], "Add tests?": ["Yes", "Unit only"] } },
-    )
-    expect(text).toBe([
-      "Here are my answers to your questions:",
-      "",
-      "- Which database?\n  Postgres",
-      "- Add tests?\n  Yes, Unit only",
-      "- Anything else?\n  (no answer)",
-    ].join("\n"))
-  })
 })
