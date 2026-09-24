@@ -1,6 +1,7 @@
 import type {
   ChatCommitChecks,
   ChatDiffSnapshot,
+  ChatRuntime,
   ChatSnapshot,
   ProviderCatalogEntry,
   QueuedChatMessage,
@@ -25,6 +26,28 @@ function sameRuntime(left: ChatSnapshot["runtime"] | null | undefined, right: Ch
     && left.planMode === right.planMode
     && left.autoPlan === right.autoPlan
     && left.sessionToken === right.sessionToken
+    && sameSubagents(left.subagents, right.subagents)
+}
+
+// Subagent activity changes on its own, without a transcript entry: a hook
+// fires and the server pushes a snapshot whose only difference is this list.
+// Leaving it out of the runtime check made that push look like a no-op, so
+// the pill appeared (and cleared) only on the next full snapshot.
+function sameSubagents(left: ChatRuntime["subagents"], right: ChatRuntime["subagents"]) {
+  if (left === right) return true
+  const leftList = left ?? []
+  const rightList = right ?? []
+  if (leftList.length !== rightList.length) return false
+  return leftList.every((agent, index) => {
+    const other = rightList[index]
+    return other !== undefined
+      && agent.id === other.id
+      && agent.status === other.status
+      && agent.label === other.label
+      && agent.type === other.type
+      && agent.startedAt === other.startedAt
+      && agent.endedAt === other.endedAt
+  })
 }
 
 function sameTranscriptEntries(left: ChatSnapshot["messages"] | null | undefined, right: ChatSnapshot["messages"] | null | undefined) {

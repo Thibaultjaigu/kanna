@@ -2979,4 +2979,49 @@ describe("subagent activity", () => {
   test("chats without delegated work stay empty", () => {
     expect(coordinator().getSubagents("chat-1")).toEqual([])
   })
+
+  test("interrupting the turn closes agents still marked running", async () => {
+    // An interrupt ends the turn without the Stop hook's sweep, so nothing
+    // else would ever close these.
+    let release!: () => void
+    const fakeCodexManager = {
+      async startSession() {},
+      async startTurn(): Promise<HarnessTurn> {
+        async function* stream() {
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "system_init",
+              provider: "codex",
+              model: "gpt-5.4",
+              tools: [],
+              agents: [],
+              slashCommands: [],
+              mcpServers: [],
+            }),
+          }
+          await new Promise<void>((resolve) => { release = resolve })
+        }
+        return { provider: "codex", stream: stream(), interrupt: async () => release(), close: () => {} }
+      },
+    }
+    const agent = new AgentCoordinator({
+      store: createFakeStore() as never,
+      onStateChange: () => {},
+      codexManager: fakeCodexManager as never,
+    })
+    await agent.send({ type: "chat.send", chatId: "chat-1", provider: "codex", content: "work" })
+    await waitFor(() => agent.getActiveStatuses().get("chat-1") === "running")
+    agent.applySubagentActivity("chat-1", { kind: "started", id: "a1", type: "subagent", label: "x" }, 1000)
+    agent.applySubagentActivity("chat-1", { kind: "started", id: "a2", type: "subagent", label: "y" }, 1000)
+    agent.applySubagentActivity("chat-1", { kind: "stopped", id: "a2", failed: false }, 2000)
+
+    await agent.cancel("chat-1")
+
+    const byId = new Map(agent.getSubagents("chat-1").map((entry) => [entry.id, entry]))
+    expect(byId.get("a1")).toMatchObject({ status: "failed" })
+    expect(byId.get("a1")?.endedAt).toBeDefined()
+    // Work that already finished keeps its outcome.
+    expect(byId.get("a2")).toMatchObject({ status: "completed", endedAt: 2000 })
+  })
 })

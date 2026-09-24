@@ -1245,6 +1245,24 @@ export class AgentCoordinator {
     }
   }
 
+  /**
+   * Close everything still marked running, as failed: it was cut off, not
+   * finished. For when the turn ends without the Stop hook's sweep — an
+   * interrupt, or a Claude session that died — which would otherwise leave
+   * the chat showing agents running forever.
+   */
+  private closeRunningSubagents(chatId: string, now = Date.now()) {
+    const byId = this.subagents.get(chatId)
+    if (!byId) return
+    let changed = false
+    for (const [id, activity] of byId) {
+      if (activity.status !== "running") continue
+      byId.set(id, { ...activity, status: "failed", endedAt: now })
+      changed = true
+    }
+    if (changed) this.emitStateChange(chatId)
+  }
+
   /** Drop the previous turn's record so the panel reflects this turn only. */
   private clearFinishedSubagents(chatId: string) {
     const byId = this.subagents.get(chatId)
@@ -2524,6 +2542,9 @@ export class AgentCoordinator {
         }
         this.activeTurns.delete(session.chatId)
       }
+      // The session is gone, so nothing it spawned can report back. Only when
+      // it is still the chat's session: a restart's replacement owns them now.
+      if (!this.claudeSessions.has(session.chatId)) this.closeRunningSubagents(session.chatId)
       session.session.close()
       this.emitStateChange(session.chatId)
     }
@@ -2748,6 +2769,7 @@ export class AgentCoordinator {
     // Remove from activeTurns immediately so the UI reflects the cancellation
     // right away, rather than waiting for interrupt() which may hang.
     this.activeTurns.delete(chatId)
+    this.closeRunningSubagents(chatId)
     this.emitStateChange(chatId)
     logClaudeSteer("cancel_active_turn_deleted", {
       chatId,

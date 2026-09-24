@@ -133,6 +133,21 @@ describe("foldChatSnapshot", () => {
     expect(ids(folded)).toEqual(["a", "b", "c", "d"])
   })
 
+  test("a push that only changes subagents is applied, and clears them again", () => {
+    // Hooks move the subagent list with no transcript entry. This push used to
+    // fold to the old snapshot, so the pill appeared only after a refresh.
+    const current = snapshot(0, ["a"])
+    const running = { id: "agent-1", type: "subagent", label: "code-reviewer", status: "running" as const, startedAt: 1 }
+    const withAgent = { ...snapshot(1, [], true), runtime: { ...current.runtime, subagents: [running] } }
+
+    const started = foldTwice(current, null, withAgent)
+    expect(started).not.toBe(current)
+    expect(started?.runtime.subagents).toEqual([running])
+
+    const stopped = { ...snapshot(1, [], true), runtime: { ...current.runtime, subagents: [{ ...running, status: "failed" as const, endedAt: 2 }] } }
+    expect(foldTwice(started, null, stopped)?.runtime.subagents?.[0]?.status).toBe("failed")
+  })
+
   test("a full push replaces outright, cache or no cache", () => {
     const base = { messages: [entry("a")], startIndex: 0 }
     expect(ids(foldTwice(null, base, snapshot(0, ["x", "y"])))).toEqual(["x", "y"])
