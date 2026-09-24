@@ -521,35 +521,12 @@ export function useChatPageSidebarActions({
     }
   }, [dialog, refreshDiffs, state.socket])
 
-  const handleCreateBranch = useCallback(async () => {
+  // The branch picker names the branch and its base (its "Create x from y"
+  // rows), so there is nothing left to ask here.
+  const handleCreateBranch = useCallback(async ({ name, baseBranchName }: { name: string; baseBranchName?: string }) => {
     const chatId = activeChatIdRef.current
     if (!chatId) {
       return
-    }
-
-    const name = await dialog.prompt({
-      title: "New Branch",
-      description: "Enter a branch name.",
-      placeholder: "feature/my-branch",
-      confirmLabel: "Create",
-    })
-    if (!name) {
-      return
-    }
-
-    const branchList = await handleListBranches()
-    const currentBranchName = branchList.currentBranchName
-    const defaultBranchName = branchList.defaultBranchName
-
-    let baseBranchName = defaultBranchName
-    if (defaultBranchName && currentBranchName && defaultBranchName !== currentBranchName) {
-      const createFromCurrent = await dialog.confirm({
-        title: "Branch Base",
-        description: `Create "${name}" from ${currentBranchName} instead of ${defaultBranchName}?`,
-        confirmLabel: `From ${currentBranchName}`,
-        cancelLabel: `From ${defaultBranchName}`,
-      })
-      baseBranchName = createFromCurrent ? currentBranchName : defaultBranchName
     }
 
     try {
@@ -577,7 +554,7 @@ export function useChatPageSidebarActions({
         closeLabel: "OK",
       })
     }
-  }, [dialog, handleListBranches, refreshDiffs, state.socket])
+  }, [dialog, refreshDiffs, state.socket])
 
   useEffect(() => {
     if (!projectId || !showRightSidebar) {

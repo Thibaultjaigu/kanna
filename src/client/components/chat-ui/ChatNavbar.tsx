@@ -1,5 +1,5 @@
 import { memo } from "react"
-import { ArrowLeft, Check, Flower, GitBranch, Globe, Loader2, MoreHorizontal, PanelLeft, PanelRight, Search, Terminal, UserRoundPlus } from "lucide-react"
+import { ArrowLeft, Check, Flower, Loader2, MoreHorizontal, PanelLeft, PanelRight, Search, Terminal, UserRoundPlus } from "lucide-react"
 import type { EditorOpenSettings, EditorPreset, OpenExternalAction, TerminalPreset } from "../../../shared/protocol"
 import { Button } from "../ui/button"
 import { CardHeader } from "../ui/card"
@@ -115,9 +115,9 @@ interface Props {
   localPath?: string
   embeddedTerminalVisible?: boolean
   onToggleEmbeddedTerminal?: () => void
-  rightPanel?: "hidden" | "git" | "browser"
-  onToggleGitPanel?: () => void
-  onToggleBrowserPanel?: () => void
+  /** Whether the right sidebar's widget column is open. */
+  widgetsOpen?: boolean
+  onToggleWidgets?: () => void
   onOpenExternal?: (action: OpenExternalAction, editor?: EditorOpenSettings, terminal?: TerminalPreset) => void
   onExportTranscript?: () => void
   canExportTranscript?: boolean
@@ -149,9 +149,8 @@ function ChatNavbarImpl({
   localPath,
   embeddedTerminalVisible = false,
   onToggleEmbeddedTerminal,
-  rightPanel = "hidden",
-  onToggleGitPanel,
-  onToggleBrowserPanel,
+  widgetsOpen = false,
+  onToggleWidgets,
   onOpenExternal,
   onExportTranscript,
   canExportTranscript = false,
@@ -178,10 +177,7 @@ function ChatNavbarImpl({
       ? null
       : (branchName ?? "Detached HEAD")
   const isMac = platform === "darwin"
-  const rightPanelVisible = rightPanel !== "hidden"
-  const handleCloseRightPanel = rightPanel === "browser" ? onToggleBrowserPanel : rightPanel === "git" ? onToggleGitPanel : undefined
-  const showBrowserPanelButton = rightPanel === "hidden" || rightPanel === "git"
-  const showGitPanelButton = rightPanel === "hidden" || rightPanel === "browser"
+  const rightPanelVisible = widgetsOpen
 
   return (
     <CardHeader
@@ -240,7 +236,7 @@ function ChatNavbarImpl({
 
         <div className="flex-1 min-w-0" />
 
-        {localPath && (onOpenExternal || onToggleEmbeddedTerminal || onToggleGitPanel || onToggleBrowserPanel || onExportTranscript) ? (
+        {localPath && (onOpenExternal || onToggleEmbeddedTerminal || onToggleWidgets || onExportTranscript) ? (
           <div className="flex items-center gap-2 flex-shrink-0">
             {onOpenExternal ? (
               <div className="hidden md:block border border-border/70 rounded-[9px] backdrop-blur-lg">
@@ -255,7 +251,7 @@ function ChatNavbarImpl({
                 />
               </div>
             ) : null}
-            {(onToggleEmbeddedTerminal || onToggleGitPanel || onToggleBrowserPanel || onExportTranscript || onOpenExternal) ? (
+            {(onToggleEmbeddedTerminal || onToggleWidgets || onExportTranscript || onOpenExternal) ? (
               <div className="flex items-center  rounded-[9px] h-[30px]">
                 <NavbarOverflowMenu
                   showOnDesktop={rightPanelVisible}
@@ -311,50 +307,28 @@ function ChatNavbarImpl({
                     )}
                   </Button>
                 ) : null}
-                {onToggleBrowserPanel && showBrowserPanelButton ? (
-                  <Button
-                    variant="ghost"
-                    size="none"
-                    onClick={onToggleBrowserPanel}
-                    title="Browser"
-                    aria-label="Browser"
-                    className={cn(
-                      "border border-border/0 hover:!border-border/0 px-1.5 h-9 max-md:h-[45px] max-md:w-[42px] max-md:px-0 hover:!bg-transparent"
-                    )}
-                  >
-                    <Globe strokeWidth={2.25} className="h-4 max-md:h-5 max-md:w-5" />
-                  </Button>
-                ) : null}
-                {onToggleGitPanel && showGitPanelButton ? (
+                {onToggleWidgets ? (
                   <HotkeyTooltip>
                     <HotkeyTooltipTrigger asChild>
                       <Button
                         variant="ghost"
                         size="none"
-                        onClick={onToggleGitPanel}
+                        onClick={onToggleWidgets}
+                        aria-label={widgetsOpen ? "Hide widgets" : "Show widgets"}
+                        aria-pressed={widgetsOpen}
                         className={cn(
                           "border flex flex-row items-center gap-1.5 h-9 max-md:h-[45px] max-md:w-[42px] max-md:px-0 border-border/0 hover:!border-border/0 hover:!bg-transparent",
-                          rightPanelVisible ? "w-[38px] justify-center px-0" : "pl-1.5 pr-2"
+                          widgetsOpen ? "w-[38px] justify-center px-0 text-foreground" : "pl-1.5 pr-2"
                         )}
                       >
-                        <GitBranch strokeWidth={2.25} className="h-4 max-md:h-5 max-md:w-5" />
-                        {branchLabel && !rightPanelVisible ? <div className="font-[13px] max-w-[140px] truncate hidden md:block">{branchLabel}</div> : null}
+                        <PanelRight strokeWidth={2.25} className="h-4 max-md:h-5 max-md:w-5" />
+                        {/* The branch rides on the closed button so it stays
+                            visible at a glance; open, the Changes widget shows it. */}
+                        {branchLabel && !widgetsOpen ? <div className="font-[13px] max-w-[140px] truncate hidden md:block">{branchLabel}</div> : null}
                       </Button>
                     </HotkeyTooltipTrigger>
                     <HotkeyTooltipContent side="bottom" shortcut={rightSidebarShortcut} />
                   </HotkeyTooltip>
-                ) : null}
-                {rightPanelVisible && handleCloseRightPanel ? (
-                  <Button
-                    variant="ghost"
-                    size="none"
-                    onClick={handleCloseRightPanel}
-                    title="Collapse sidebar"
-                    aria-label="Collapse sidebar"
-                    className="border border-border/0 hover:!border-border/0 px-1.5 h-9 max-md:h-[45px] max-md:w-[42px] max-md:px-0 hover:!bg-transparent text-foreground"
-                  >
-                    <PanelRight strokeWidth={2.25} className="h-4 max-md:h-5 max-md:w-5" />
-                  </Button>
                 ) : null}
               </div>
             ) : null}

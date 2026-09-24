@@ -917,14 +917,12 @@ export function useKannaState(activeChatId: string | null): KannaState {
   }, [socket])
 
   /**
-   * "Setup Git" from a sidebar hover card: the same confirm-then-`git init` the
-   * chat navbar's branch slot runs, for a chat that isn't necessarily the one
-   * you have open. The server resolves the project from the chat, and
+   * "Setup Git" from a sidebar hover card: confirm, then `git init`, for a
+   * chat that isn't necessarily the one you have open. The server resolves the project from the chat, and
    * `chat.initGit` is a no-op success on a folder that turns out to already be
    * a repo — so a stale snapshot costs nothing.
-   *
-   * Unlike the navbar's copy this doesn't open the git panel afterwards: you
-   * were pointing at a row in the sidebar, not asking to go anywhere.
+   * It doesn't open the widgets afterwards: you were pointing at a row in the
+   * sidebar, not asking to go anywhere.
    */
   const handleSetupGit = useCallback(async (chatId: string) => {
     const confirmed = await dialog.confirm({

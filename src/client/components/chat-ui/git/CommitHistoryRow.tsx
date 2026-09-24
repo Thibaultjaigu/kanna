@@ -48,13 +48,20 @@ function CommitChecksBadge({ checks }: { checks: ChatCommitChecks }) {
   )
 }
 
-export function CommitHistoryRow({ entry, isPendingPush = false }: { entry: ChatBranchHistoryEntry; isPendingPush?: boolean }) {
+export function CommitHistoryRow({ entry, isPendingPush = false, divided = false }: {
+  entry: ChatBranchHistoryEntry
+  isPendingPush?: boolean
+  /** Draws the divider above the row, on the link so it's clickable and part of the hover. */
+  divided?: boolean
+}) {
   const relativeTime = formatRelativeTime(entry.authoredAt)
   const isClickable = Boolean(entry.githubUrl)
   const showTags = entry.tags.length > 0 || isPendingPush
 
   return (
-    <div className="relative">
+    // The whole row carries the hover, not the link: the checks badge sits on
+    // top of the link, and a hover owned by the link went dark under it.
+    <div className="group/commit relative">
       {/* The commit link sits behind the row rather than wrapping it. The
           checks badge is a button too, and a button cannot nest in a button. */}
       <button
@@ -65,13 +72,17 @@ export function CommitHistoryRow({ entry, isPendingPush = false }: { entry: Chat
         }}
         aria-label={`Open commit ${entry.sha.slice(0, 7)} on GitHub`}
         className={cn(
-          "absolute inset-0 transition-colors",
-          isClickable ? "hover:bg-accent" : "cursor-default"
+          "absolute inset-0",
+          divided && "border-t border-border",
+          isClickable ? "group-hover/commit:bg-muted" : "cursor-default"
         )}
       />
       <div
         className={cn(
+          // The link's divider takes the row's first pixel; the text sits on
+          // the same rhythm either way.
           "pointer-events-none relative flex w-full items-start gap-3 py-2.5 pl-3 pr-2 text-left",
+          divided && "pt-[calc(0.625rem+1px)]",
           isClickable ? null : "opacity-60"
         )}
       >

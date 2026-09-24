@@ -16,7 +16,6 @@ import {
   Gauge,
   GitBranch,
   GitFork,
-  Globe,
   History,
   House,
   ListFilter,
@@ -25,6 +24,7 @@ import {
   Lock,
   LockOpen,
   Moon,
+  PanelRight,
   Paperclip,
   Plus,
   Settings2,
@@ -62,7 +62,7 @@ import {
 } from "../../lib/project-fs"
 import { filterProjects, getLocalProjectTitle, groupProjectsByRecency, groupProjectsForNewChat } from "../../lib/project-groups"
 import { usePendingSendStore } from "../../stores/pendingSendStore"
-import { useRightSidebarStore } from "../../stores/rightSidebarStore"
+import { useRightSidebarStore, useWidgetsOpen } from "../../stores/rightSidebarStore"
 import { setFocusMode, useFocusModeEnabled } from "../../stores/focusModeStore"
 import { useSidebarStore } from "../../stores/sidebarStore"
 import { useChatHasDraft } from "../../stores/chatInputStore"
@@ -300,10 +300,8 @@ export function CommandPalette({ state }: { state: KannaState }) {
 
   const onChatPage = Boolean(state.activeChatId)
   const projectId = state.activeProjectId
-  // Reactive right-panel state for the active project so the palette's
-  // Show/Hide labels track the panel the way the navbar toggles do.
-  const rightPanel = useRightSidebarStore((store) =>
-    (projectId ? store.projects[projectId]?.rightPanel : undefined) ?? "hidden")
+  // Reactive so the palette's Show/Hide Widgets label tracks the navbar toggle.
+  const widgetsOpen = useWidgetsOpen(projectId)
   const isMac = (state.localProjects?.machine.platform ?? "darwin") === "darwin"
   // Reactive so the action's label flips between Focus and Exit Focus Mode.
   const focusModeEnabled = useFocusModeEnabled()
@@ -477,16 +475,6 @@ export function CommandPalette({ state }: { state: KannaState }) {
     setActionError(null)
     void runClone(repo)
   }, [runClone])
-
-  const openGitPanel = useCallback((viewMode: "changes" | "history") => {
-    if (!projectId) return
-    const store = useRightSidebarStore.getState()
-    const currentPanel = store.projects[projectId]?.rightPanel ?? "hidden"
-    if (currentPanel !== "git") {
-      store.togglePanel(projectId, "git")
-    }
-    store.setViewMode(projectId, viewMode)
-  }, [projectId])
 
   const currentProjectTitle = useMemo(
     () => (projectId
@@ -672,46 +660,20 @@ export function CommandPalette({ state }: { state: KannaState }) {
     })
 
     if (onChatPage && projectId) {
-      const gitPanelVisible = rightPanel === "git"
-      const browserPanelVisible = rightPanel === "browser"
       list.push({
-        id: "git-panel",
-        title: gitPanelVisible ? "Hide Git Panel" : "Show Git Panel",
-        keywords: ["diff", "commit", "stage", "source control", "changes", "show", "hide"],
-        icon: <GitBranch className={ICON_CLASS} />,
+        id: "toggle-widgets",
+        title: widgetsOpen ? "Hide Widgets" : "Show Widgets",
+        // The widgets took over the git and browser panels, so their old
+        // words still find the toggle.
+        keywords: [
+          "right sidebar", "panel", "git", "diff", "changes", "commit", "stage", "source control", "history", "log",
+          "ports", "localhost", "servers", "browser", "todos", "agents", "subagents", "attachments", "show", "hide",
+        ],
+        icon: <PanelRight className={ICON_CLASS} />,
         shortcut: chatShortcuts("toggleRightSidebar"),
         run: () => {
           close()
-          if (gitPanelVisible) {
-            useRightSidebarStore.getState().hidePanel(projectId)
-          } else {
-            openGitPanel("changes")
-          }
-        },
-      })
-      list.push({
-        id: "git-history",
-        title: "Open Git History",
-        keywords: ["commits", "log", "source control"],
-        icon: <History className={ICON_CLASS} />,
-        run: () => {
-          close()
-          openGitPanel("history")
-        },
-      })
-      list.push({
-        id: "browser-panel",
-        title: browserPanelVisible ? "Hide Browser Panel" : "Show Browser Panel",
-        keywords: ["preview", "localhost", "web", "show", "hide"],
-        icon: <Globe className={ICON_CLASS} />,
-        run: () => {
-          close()
-          const store = useRightSidebarStore.getState()
-          if (browserPanelVisible) {
-            store.hidePanel(projectId)
-          } else {
-            store.togglePanel(projectId, "browser")
-          }
+          useRightSidebarStore.getState().toggleWidgets(projectId)
         },
       })
       list.push({
@@ -999,11 +961,10 @@ export function CommandPalette({ state }: { state: KannaState }) {
     isMac,
     navigate,
     onChatPage,
-    openGitPanel,
     projectId,
     pushPage,
     resolvedTheme,
-    rightPanel,
+    widgetsOpen,
     setTheme,
     state.activeChatId,
     state.appSettings?.newSidebarEnabled,

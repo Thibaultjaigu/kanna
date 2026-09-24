@@ -10,7 +10,6 @@ import {
   type ModelOptions,
   type ProviderCatalogEntry,
   resolveClaudeContextWindowMaxTokens,
-  type SubagentActivity,
 } from "../../../shared/types"
 import { Button } from "../ui/button"
 import { Textarea } from "../ui/textarea"
@@ -33,7 +32,6 @@ import { shouldSteerSubmit } from "../../../shared/submit-mode"
 import { SignInDialog } from "../auth/SignInDialog"
 import { ChatPreferenceControls } from "./ChatPreferenceControls"
 import { ContextWindowMeter } from "./ContextWindowMeter"
-import { SubagentActivityPill } from "./SubagentActivityPill"
 import { AttachmentFileCard, AttachmentImageCard } from "../messages/AttachmentCard"
 import { AttachmentPreviewModal } from "../messages/AttachmentPreviewModal"
 import { classifyAttachmentPreview } from "../messages/attachmentPreview"
@@ -47,7 +45,6 @@ import {
 } from "../../lib/skill-menu"
 
 /** Stable default, so a chat with no delegated work doesn't re-render on it. */
-const EMPTY_SUBAGENTS: readonly SubagentActivity[] = []
 
 const MAX_FILES_PER_DROP = 50
 const MAX_CONCURRENT_UPLOADS = 3
@@ -195,8 +192,6 @@ interface Props {
   activeProvider: AgentProvider | null
   availableProviders: ProviderCatalogEntry[]
   contextWindowSnapshot?: ContextWindowSnapshot | null
-  /** Delegated work for this chat; drives the composer activity pill. */
-  subagents?: readonly SubagentActivity[]
   previousPrompt?: string | null
   onEditModels?: () => void
   /** Enumerates the selected harness's invocable skills for the "/" menu. */
@@ -221,7 +216,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   activeProvider,
   availableProviders,
   contextWindowSnapshot = null,
-  subagents = EMPTY_SUBAGENTS,
   previousPrompt = null,
   onEditModels,
   onListSkills,
@@ -1201,24 +1195,17 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             includeMode={showModePicker}
             className="max-w-[840px] mx-auto"
           />
-          {subagents.length > 0 || activeContextWindow ? (
+          {activeContextWindow ? (
             <div className="mx-[13px] flex items-center gap-2 md:hidden">
-              <SubagentActivityPill subagents={subagents} />
-              {activeContextWindow ? <ContextWindowMeter usage={activeContextWindow} /> : null}
+              <ContextWindowMeter usage={activeContextWindow} />
             </div>
           ) : null}
           <div className={controlsScrollSpacer} />
         </div>
 
-        {/* One flex row, not two independently positioned boxes.
-            Positioned separately, each was centred against its own line box —
-            and because the pill is text-xs while the dial inherits a larger
-            size, those boxes differ in height, so -translate-y-1/2 landed them
-            at different offsets. `items-center` makes the two agree by
-            construction, at whatever size either one grows into.
-            right-[17px] is where the dial already sat: right-[29px] pulled back
-            by translate-x-1/2 of its own 24px. */}
-        {subagents.length > 0 || activeContextWindow ? (
+        {/* right-[17px] is where the dial has always sat: right-[29px]
+            pulled back by translate-x-1/2 of its own 24px. */}
+        {activeContextWindow ? (
           <div className={cn(
             "absolute inset-y-0 right-[17px] hidden items-center gap-2 md:flex",
             // Mirror the parent's own padding so this spans its *content* box.
@@ -1228,8 +1215,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             // on the row itself, in both modes.
             isStandalone ? "pt-3 pb-5" : "py-3"
           )}>
-            <SubagentActivityPill subagents={subagents} />
-            {activeContextWindow ? <ContextWindowMeter usage={activeContextWindow} /> : null}
+            <ContextWindowMeter usage={activeContextWindow} />
           </div>
         ) : null}
       </div>

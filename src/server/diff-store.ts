@@ -984,6 +984,8 @@ function parseNumstatValue(value: string) {
 }
 
 const FILE_SCAN_CONCURRENCY = 32
+/** Commits sent with the branch history: the History widget shows 5, then all of these. */
+export const BRANCH_HISTORY_LIMIT = 25
 const MAX_LINE_COUNT_BYTES = 10 * 1024 * 1024
 const MAX_COMMIT_MESSAGE_PATCH_FILES = 25
 // Reading whole files to build a text patch is only reasonable up to a point;
@@ -1949,7 +1951,7 @@ export class DiffStore {
         ? getBranchHistory({
             repoRoot: repo.repoRoot,
             ref: branchName ?? "HEAD",
-            limit: 20,
+            limit: BRANCH_HISTORY_LIMIT,
             remoteUrl: originRemoteUrl,
           })
         : Promise.resolve({ entries: [] }),

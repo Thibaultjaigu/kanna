@@ -1,37 +1,40 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
+/**
+ * The right sidebar is one column of widgets (agents, git, attachments,
+ * ports, quick actions, usage). It is either open or closed per project;
+ * there are no panels to pick between.
+ */
 export interface ProjectRightSidebarVisibilityState {
-  rightPanel: "hidden" | "git" | "browser"
+  widgetsOpen: boolean
 }
 
+/** The widget disclosures whose open state is remembered per project. */
+export type WidgetDisclosureId = "changes" | "history" | "ports" | "quickActions" | "usage"
+
 export interface ProjectRightSidebarUiState {
-  viewMode: "changes" | "history"
+  /**
+   * Disclosures the user has opened or closed. Unset means never touched, and
+   * the widget falls back to its default (open when it holds only a few rows).
+   */
+  expanded: Partial<Record<WidgetDisclosureId, boolean>>
   collapsedPaths: Record<string, boolean>
   summary: string
   description: string
-}
-
-export interface ProjectBrowserPanelState {
-  address: string
-  history: string[]
-  historyIndex: number
-  zoom: number
 }
 
 interface RightSidebarState {
   size: number
   projects: Record<string, ProjectRightSidebarVisibilityState>
   projectUi: Record<string, ProjectRightSidebarUiState>
-  projectBrowser: Record<string, ProjectBrowserPanelState>
-  togglePanel: (projectId: string, panel: Exclude<ProjectRightSidebarVisibilityState["rightPanel"], "hidden">) => void
-  hidePanel: (projectId: string) => void
+  toggleWidgets: (projectId: string) => void
+  openWidgets: (projectId: string) => void
+  hideWidgets: (projectId: string) => void
   setSize: (size: number) => void
-  navigateBrowser: (projectId: string, address: string) => void
-  setBrowserZoom: (projectId: string, zoom: number) => void
   reconcileCollapsedPaths: (projectId: string, paths: string[]) => void
   toggleCollapsedPath: (projectId: string, path: string) => void
-  setViewMode: (projectId: string, viewMode: ProjectRightSidebarUiState["viewMode"]) => void
+  setWidgetExpanded: (projectId: string, id: WidgetDisclosureId, expanded: boolean) => void
   setCommitDraft: (projectId: string, draft: Pick<ProjectRightSidebarUiState, "summary" | "description">) => void
   clearCommitDraft: (projectId: string) => void
   clearProject: (projectId: string) => void
@@ -45,94 +48,58 @@ function clampSize(size: number) {
   return Math.max(RIGHT_SIDEBAR_MIN_WIDTH_PX, size)
 }
 
-function createDefaultProjectVisibilityState(): ProjectRightSidebarVisibilityState {
-  return {
-    rightPanel: "hidden",
-  }
-}
-
 function createDefaultProjectUiState(): ProjectRightSidebarUiState {
   return {
-    viewMode: "history",
+    expanded: {},
     collapsedPaths: {},
     summary: "",
     description: "",
   }
 }
 
-function createDefaultProjectBrowserState(): ProjectBrowserPanelState {
-  return {
-    address: "",
-    history: [],
-    historyIndex: -1,
-    zoom: 1,
-  }
+function isWidgetsOpen(projects: Record<string, ProjectRightSidebarVisibilityState>, projectId: string) {
+  return projects[projectId]?.widgetsOpen ?? false
 }
 
-function normalizeBrowserAddress(address: string) {
-  const trimmed = address.trim()
-  if (!trimmed) return ""
-  if (/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)) return trimmed
-  return `http://${trimmed}`
-}
-
-function clampZoom(zoom: number) {
-  if (!Number.isFinite(zoom)) return 1
-  return Math.min(2, Math.max(0.5, Math.round(zoom * 10) / 10))
-}
-
-function getProjectVisibilityState(
-  projects: Record<string, ProjectRightSidebarVisibilityState>,
-  projectId: string
-): ProjectRightSidebarVisibilityState {
-  return projects[projectId] ?? createDefaultProjectVisibilityState()
-}
-
-function getProjectBrowserState(
-  projectBrowser: Record<string, ProjectBrowserPanelState>,
-  projectId: string
-): ProjectBrowserPanelState {
-  return projectBrowser[projectId] ?? createDefaultProjectBrowserState()
-}
-
-export function migrateRightSidebarStore(persistedState: unknown) {
+/**
+ * v8 folded the git / browser panels into one widget column: any panel that
+ * was open (or the pre-panel `isVisible` flag) now means the widgets are open.
+ * The embedded browser's state and the Changes/History picker are dropped.
+ */
+export function migrateRightSidebarStore(persistedState: unknown, version = 0) {
   if (!persistedState || typeof persistedState !== "object") {
-    return { size: DEFAULT_RIGHT_SIDEBAR_SIZE, projects: {}, projectUi: {}, projectBrowser: {} }
+    return { size: DEFAULT_RIGHT_SIDEBAR_SIZE, projects: {}, projectUi: {} }
   }
 
   const state = persistedState as {
     size?: number
-    projects?: Record<string, Partial<{ isVisible: boolean, rightPanel: ProjectRightSidebarVisibilityState["rightPanel"], size: number }>>
-    projectUi?: Record<string, ProjectRightSidebarUiState>
-    projectBrowser?: Record<string, Partial<ProjectBrowserPanelState>>
+    projects?: Record<string, Partial<{ isVisible: boolean; rightPanel: string; widgetsOpen: boolean }>>
+    projectUi?: Record<string, Partial<ProjectRightSidebarUiState> & { viewMode?: unknown }>
   }
   const projects = Object.fromEntries(
     Object.entries(state.projects ?? {}).map(([projectId, layout]) => [
       projectId,
       {
-        rightPanel: layout.rightPanel ?? (layout.isVisible ? "git" : "hidden"),
+        widgetsOpen: layout.widgetsOpen
+          ?? (layout.rightPanel !== undefined ? layout.rightPanel !== "hidden" : Boolean(layout.isVisible)),
+      },
+    ])
+  )
+  const projectUi = Object.fromEntries(
+    Object.entries(state.projectUi ?? {}).map(([projectId, ui]) => [
+      projectId,
+      {
+        expanded: ui.expanded ?? {},
+        collapsedPaths: ui.collapsedPaths ?? {},
+        summary: ui.summary ?? "",
+        description: ui.description ?? "",
       },
     ])
   )
 
-  const projectBrowser = Object.fromEntries(
-    Object.entries(state.projectBrowser ?? {}).map(([projectId, browserState]) => {
-      const address = normalizeBrowserAddress(browserState.address ?? "")
-      const history = (browserState.history ?? []).map(normalizeBrowserAddress).filter(Boolean)
-      const historyIndex = Math.min(history.length - 1, Math.max(-1, browserState.historyIndex ?? (history.length - 1)))
-      return [
-        projectId,
-        {
-          address,
-          history,
-          historyIndex,
-          zoom: clampZoom(browserState.zoom ?? 1),
-        },
-      ]
-    })
-  )
-
-  return { size: DEFAULT_RIGHT_SIDEBAR_SIZE, projects, projectUi: state.projectUi ?? {}, projectBrowser }
+  // Sizes before v7 were percentages of the window, not pixels.
+  const size = version >= 7 && state.size !== undefined ? clampSize(state.size) : DEFAULT_RIGHT_SIDEBAR_SIZE
+  return { size, projects, projectUi }
 }
 
 export const useRightSidebarStore = create<RightSidebarState>()(
@@ -141,76 +108,19 @@ export const useRightSidebarStore = create<RightSidebarState>()(
       size: DEFAULT_RIGHT_SIDEBAR_SIZE,
       projects: {},
       projectUi: {},
-      projectBrowser: {},
-      togglePanel: (projectId, panel) =>
+      toggleWidgets: (projectId) =>
         set((state) => ({
-          projects: {
-            ...state.projects,
-            [projectId]: {
-              ...getProjectVisibilityState(state.projects, projectId),
-              rightPanel: getProjectVisibilityState(state.projects, projectId).rightPanel === panel ? "hidden" : panel,
-            },
-          },
+          projects: { ...state.projects, [projectId]: { widgetsOpen: !isWidgetsOpen(state.projects, projectId) } },
         })),
-      hidePanel: (projectId) =>
-        set((state) => ({
-          projects: {
-            ...state.projects,
-            [projectId]: {
-              ...getProjectVisibilityState(state.projects, projectId),
-              rightPanel: "hidden",
-            },
-          },
-        })),
+      openWidgets: (projectId) =>
+        set((state) => (isWidgetsOpen(state.projects, projectId)
+          ? state
+          : { projects: { ...state.projects, [projectId]: { widgetsOpen: true } } })),
+      hideWidgets: (projectId) =>
+        set((state) => (isWidgetsOpen(state.projects, projectId)
+          ? { projects: { ...state.projects, [projectId]: { widgetsOpen: false } } }
+          : state)),
       setSize: (size) => set({ size: clampSize(size) }),
-      navigateBrowser: (projectId, address) => set((state) => {
-        const current = getProjectBrowserState(state.projectBrowser, projectId)
-        const nextAddress = normalizeBrowserAddress(address)
-        if (!nextAddress) {
-          return {
-            projectBrowser: {
-              ...state.projectBrowser,
-              [projectId]: {
-                ...current,
-                address: "",
-              },
-            },
-          }
-        }
-
-        if (current.address === nextAddress) return state
-
-        const previousHistory = current.history.slice(0, current.historyIndex + 1)
-        const history = previousHistory[previousHistory.length - 1] === nextAddress
-          ? previousHistory
-          : [...previousHistory, nextAddress]
-
-        return {
-          projectBrowser: {
-            ...state.projectBrowser,
-            [projectId]: {
-              ...current,
-              address: nextAddress,
-              history,
-              historyIndex: history.length - 1,
-            },
-          },
-        }
-      }),
-      setBrowserZoom: (projectId, zoom) => set((state) => {
-        const current = getProjectBrowserState(state.projectBrowser, projectId)
-        const nextZoom = clampZoom(zoom)
-        if (current.zoom === nextZoom) return state
-        return {
-          projectBrowser: {
-            ...state.projectBrowser,
-            [projectId]: {
-              ...current,
-              zoom: nextZoom,
-            },
-          },
-        }
-      }),
       reconcileCollapsedPaths: (projectId, paths) => set((state) => {
         const current = state.projectUi[projectId] ?? createDefaultProjectUiState()
         const nextCollapsedPaths = Object.fromEntries(paths.map((path) => [path, current.collapsedPaths[path] ?? true]))
@@ -245,15 +155,16 @@ export const useRightSidebarStore = create<RightSidebarState>()(
           },
         }
       }),
-      setViewMode: (projectId, viewMode) => set((state) => {
+      setWidgetExpanded: (projectId, id, expanded) => set((state) => {
         const current = state.projectUi[projectId] ?? createDefaultProjectUiState()
-        if (current.viewMode === viewMode) return state
+        // `?? {}`: a state persisted before this map existed has no `expanded`.
+        if (current.expanded?.[id] === expanded) return state
         return {
           projectUi: {
             ...state.projectUi,
             [projectId]: {
               ...current,
-              viewMode,
+              expanded: { ...current.expanded, [id]: expanded },
             },
           },
         }
@@ -290,24 +201,18 @@ export const useRightSidebarStore = create<RightSidebarState>()(
         set((state) => {
           const { [projectId]: _removedLayout, ...restProjects } = state.projects
           const { [projectId]: _removedUi, ...restProjectUi } = state.projectUi
-          const { [projectId]: _removedBrowser, ...restProjectBrowser } = state.projectBrowser
-          return { projects: restProjects, projectUi: restProjectUi, projectBrowser: restProjectBrowser }
+          return { projects: restProjects, projectUi: restProjectUi }
         }),
     }),
     {
       name: "right-sidebar-layouts",
-      version: 7,
+      version: 8,
       migrate: migrateRightSidebarStore,
     }
   )
 )
 
-export const DEFAULT_RIGHT_SIDEBAR_VISIBILITY_STATE: ProjectRightSidebarVisibilityState = {
-  rightPanel: "hidden",
-}
-
-export function getDefaultRightSidebarVisibilityState() {
-  return {
-    ...DEFAULT_RIGHT_SIDEBAR_VISIBILITY_STATE,
-  }
+/** Reactive: whether this project's widget column is open. */
+export function useWidgetsOpen(projectId: string | null | undefined) {
+  return useRightSidebarStore((store) => (projectId ? isWidgetsOpen(store.projects, projectId) : false))
 }

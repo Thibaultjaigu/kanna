@@ -729,7 +729,7 @@ const TranscriptScrollerBody = memo(function TranscriptScrollerBody({
     if (!jumpRequest || handledJumpRequestIdRef.current === jumpRequest.requestId) return null
     handledJumpRequestIdRef.current = jumpRequest.requestId
     onJumpRequestHandled?.(jumpRequest.requestId)
-    const target = resolveJumpTarget(resolvedRows, jumpRequest.role)
+    const target = resolveJumpTarget(resolvedRows, jumpRequest.target)
     return target?.kind === "pin" ? prepareJumpToRow(target.rowId) : target
   }, [jumpRequest, onJumpRequestHandled, prepareJumpToRow, resolvedRows])
 

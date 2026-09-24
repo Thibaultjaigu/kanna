@@ -1,0 +1,325 @@
+import { ChevronRight, Ellipsis } from "lucide-react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
+import { cn } from "../../../lib/utils"
+import { useRightSidebarStore, type WidgetDisclosureId } from "../../../stores/rightSidebarStore"
+import { openContextMenuFromButton } from "../../open-external-menu"
+import { Button } from "../../ui/button"
+
+/**
+ * Widgets in the right sidebar's column.
+ *
+ * Styled after the left sidebar: the same rounded, bordered card, and a header
+ * that reads like its section headers (muted label, icon, trailing count), so
+ * the two sidebars look like one app rather than a chat UI with a dev panel
+ * bolted on.
+ *
+ * A widget is one or more sections in a card. Most widgets are one section
+ * (WidgetCard); a widget can stack several in one WidgetGroup, each with its
+ * own disclosure, split by a divider.
+ *
+ * The grammar every widget follows, so the column reads as one design:
+ * - Count: a bare number ("5"). A subset of it is "N of M" ("3 of 5"). A state
+ *   word goes after the number ("3 of 5 running", "2 unpushed").
+ * - Running: the red `text-logo` spinner the left sidebar shows for a busy
+ *   chat. Done is `text-success`, failed is `text-destructive`.
+ * - Rows touch. No gap, space-y or margin between rows (or tiles, or menu
+ *   items): the pointer crossing a gap unlights the row, and a list that
+ *   flickers off between rows feels broken. Spacing goes inside the row, as
+ *   padding, and a divider belongs to the element that carries the hover.
+ * - Row actions: a context menu on the row, opened from a kebab
+ *   (WidgetRowMenuButton) for pointers that can't right-click.
+ * - Disclosures start open when they hold a few rows and closed when they
+ *   hold many (defaultWidgetExpanded). Once toggled, they remember it per project.
+ * - Status changes (spinner to check, a label that swaps) cross-fade through
+ *   SwapIn. Nothing else in the column animates except cards entering and
+ *   leaving (WidgetPresence): the column is opened too often for more.
+ */
+
+export interface WidgetSectionProps {
+  /** Omit when the title brings its own glyph. */
+  icon?: ReactNode
+  title: ReactNode
+  /** Trailing muted count next to the title, e.g. "3" or "2 of 5". */
+  count?: ReactNode
+  /** Controls on the right of the header. Clicks here never toggle the section. */
+  actions?: ReactNode
+  expanded?: boolean
+  /** Makes the header a disclosure (chevron, rotates when open). Without it the section is always expanded. */
+  onToggle?: () => void
+  /** The body. Omit for a header-only section. */
+  children?: ReactNode
+  /** Always visible below the body, even while a disclosure is collapsed. */
+  footer?: ReactNode
+}
+
+/** A header, its body and footer, without the card around them. */
+export function WidgetSection({
+  icon,
+  title,
+  count,
+  actions,
+  expanded,
+  onToggle,
+  children,
+  footer,
+}: WidgetSectionProps) {
+  // One header grammar for every widget: icon, title, then the count set like
+  // the Branch header's branch name (same size, muted, on the title's
+  // baseline), then the chevron tucked 4px after, as the left sidebar's
+  // section headers keep theirs.
+  const heading = (
+    <>
+      {icon ? <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground [&_svg]:size-4">{icon}</span> : null}
+      <span className="flex min-w-0 items-baseline gap-1.5">
+        <span className="min-w-0 truncate text-section-title">{title}</span>
+        {count !== undefined && count !== null ? (
+          <span className="shrink-0 tabular-nums text-muted-foreground">{count}</span>
+        ) : null}
+      </span>
+      {onToggle ? (
+        // Rotates on every toggle, so short; the body itself opens instantly.
+        <ChevronRight className={cn("-ml-1 size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 ease-snappy", expanded && "rotate-90")} />
+      ) : null}
+    </>
+  )
+
+  return (
+    <div>
+      <header className="flex h-10 items-center gap-2 pl-3 pr-2 text-sm">
+        {onToggle ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={onToggle}
+            className="-ml-1.5 flex min-w-0 flex-1 items-center gap-2 self-stretch rounded-lg pl-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
+            {heading}
+          </button>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-2">{heading}</div>
+        )}
+        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
+      </header>
+      {/* Uncapped: a widget is as tall as its content and the column scrolls.
+          Two bodies cap themselves and scroll inside: Changes, which can list
+          thousands of files, and Attachments. */}
+      {children && (!onToggle || expanded) ? <div className="border-t border-border">{children}</div> : null}
+      {footer ? <div className="border-t border-border">{footer}</div> : null}
+    </div>
+  )
+}
+
+/** The card surface that holds a widget's sections, divided from each other. */
+export function WidgetGroup({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <section className={cn("divide-y divide-border overflow-hidden rounded-2xl border border-border bg-background dark:bg-card", className)}>
+      {children}
+    </section>
+  )
+}
+
+/** A one-section widget: the common case. */
+export function WidgetCard({ className, ...section }: WidgetSectionProps & { className?: string }) {
+  return (
+    <WidgetGroup className={className}>
+      <WidgetSection {...section} />
+    </WidgetGroup>
+  )
+}
+
+type PresencePhase = "hidden" | "entering" | "shown" | "exiting"
+
+/** Matches the exit's duration-150, with slack for a late frame. */
+const PRESENCE_EXIT_MS = 180
+
+/**
+ * One slot in the column. It holds a card that comes and goes with the
+ * agent's work (agents, ports, changes).
+ *
+ * Cards appear and vanish while you are using the column. The ones near the
+ * top would push everything below them 100–300px in a single frame, often
+ * right as you reach for a button. So a card grows in (rows 0fr → 1fr, with
+ * opacity) and shrinks out, and what is below slides instead of jumping.
+ * Exit is faster than enter: leaving is the system answering, not something
+ * to watch.
+ *
+ * A card present when the slot mounts shows at once: opening the column is
+ * not a change to announce, and it happens far too often to animate.
+ *
+ * The slot also owns the column's spacing (pt-2 inside the collapsing part),
+ * so a card's gap folds away with it instead of snapping shut at the end.
+ */
+export function WidgetPresence({ show, children }: { show: boolean; children: ReactNode }) {
+  const [phase, setPhase] = useState<PresencePhase>(show ? "shown" : "hidden")
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  // While leaving, the card keeps its last content. What the caller renders
+  // once `show` is false is the empty state that made it leave.
+  const lastChildrenRef = useRef(children)
+  if (show) lastChildrenRef.current = children
+
+  useLayoutEffect(() => {
+    setPhase((current) => {
+      if (show) return current === "hidden" ? "entering" : current === "exiting" ? "shown" : current
+      return current === "shown" || current === "entering" ? "exiting" : current
+    })
+  }, [show])
+
+  useLayoutEffect(() => {
+    if (phase !== "entering") return
+    // Commit the collapsed style before the open one, or the browser only
+    // sees the end state and there is nothing to transition from.
+    rootRef.current?.getBoundingClientRect()
+    setPhase("shown")
+  }, [phase])
+
+  useEffect(() => {
+    if (phase !== "exiting") return
+    const timer = window.setTimeout(() => setPhase("hidden"), PRESENCE_EXIT_MS)
+    return () => window.clearTimeout(timer)
+  }, [phase])
+
+  if (phase === "hidden") return null
+  const open = phase === "shown"
+  return (
+    <div
+      ref={rootRef}
+      inert={!open}
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] ease-snappy motion-reduce:transition-opacity",
+        open ? "grid-rows-[1fr] opacity-100 duration-200" : "grid-rows-[0fr] opacity-0 duration-150",
+      )}
+    >
+      <div className="min-h-0 overflow-hidden">
+        <div className="pt-2">{show ? children : lastChildrenRef.current}</div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A status that changes in place (spinner → check, "Generating…" →
+ * "Pushing…"). Each new `swapKey` cross-fades in: opacity, a slight scale,
+ * and 2px of blur that makes the two states read as one thing changing
+ * rather than two things swapping.
+ *
+ * The first key never animates. Only a change does, so opening the column
+ * doesn't fade in every icon in it.
+ */
+export function SwapIn({ swapKey, className, children }: { swapKey: string; className?: string; children: ReactNode }) {
+  const [initialKey] = useState(swapKey)
+  const swappedRef = useRef(false)
+  if (swapKey !== initialKey) swappedRef.current = true
+  return (
+    <span
+      key={swapKey}
+      className={cn(
+        "inline-flex items-center",
+        swappedRef.current && "transition-[opacity,filter,scale] duration-150 ease-snappy starting:scale-75 starting:opacity-0 starting:blur-[2px] motion-reduce:transition-opacity",
+        className,
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+/**
+ * Whether a disclosure starts open: yes when it holds a few rows (a URL, a
+ * couple of commands, two usage windows), since hiding those behind a click
+ * costs more than showing them. No when it holds many.
+ */
+export function defaultWidgetExpanded(rowCount: number) {
+  return rowCount > 0 && rowCount <= 3
+}
+
+/**
+ * A disclosure's open state, remembered per project once toggled.
+ *
+ * Until then it follows defaultWidgetExpanded. That default is fixed at the
+ * first non-zero count the project shows. A default that tracked the count
+ * would fold the card shut under you the moment a fourth file changed.
+ */
+export function useWidgetExpanded(
+  projectId: string | null,
+  id: WidgetDisclosureId,
+  rowCount: number,
+): [expanded: boolean, setExpanded: (expanded: boolean) => void] {
+  const stored = useRightSidebarStore((store) => (projectId ? store.projectUi[projectId]?.expanded?.[id] : undefined))
+  const setWidgetExpanded = useRightSidebarStore((store) => store.setWidgetExpanded)
+  const defaultsRef = useRef(new Map<string, boolean>())
+  const key = projectId ?? ""
+  if (!defaultsRef.current.has(key) && rowCount > 0) defaultsRef.current.set(key, defaultWidgetExpanded(rowCount))
+  const expanded = stored ?? defaultsRef.current.get(key) ?? false
+  const setExpanded = useCallback((next: boolean) => {
+    if (projectId) setWidgetExpanded(projectId, id, next)
+  }, [id, projectId, setWidgetExpanded])
+  return [expanded, setExpanded]
+}
+
+/**
+ * The one row highlight in the column: the outline button's hover (Merge
+ * into…, the commit button), a muted fill inside a border. Every row in every
+ * widget uses it, for hover and for a keyboard cursor alike.
+ *
+ * Inset rows (rounded, inside a padded body) take both and carry a
+ * transparent border at rest so nothing shifts. Rows that run edge to edge
+ * between dividers take the fill only: a border there would double the
+ * divider.
+ *
+ * Instant, with no transition: a pointer sweeps down a list, and a fade
+ * leaves a trail of half-lit rows behind it. The button keeps its short fade;
+ * it is one target, not a list.
+ */
+export const ROW_HIGHLIGHT_CLASS = "border-border bg-muted"
+export const ROW_HOVER_CLASS = "hover:border-border hover:bg-muted"
+export const EDGE_ROW_HOVER_CLASS = "hover:bg-muted"
+
+/**
+ * A row inside a widget body (a p-1.5 body), matching the left sidebar's row
+ * look. Its geometry lines up with the header: 6px body padding + 1px border
+ * + 5px puts a leading 16px icon at 12px, the header icon's inset, so both
+ * share a centerline; the 8px gap then starts the label where the title does.
+ */
+export const WIDGET_ROW_CLASS =
+  `flex w-full min-w-0 items-center gap-2 rounded-lg border border-transparent px-[5px] py-1.5 text-left text-sm ${ROW_HOVER_CLASS}`
+
+/**
+ * Makes a row element a button without being a <button>: rows carry a kebab
+ * (WidgetRowMenuButton), and a button can't hold another. Enter and Space on
+ * the kebab stay the kebab's.
+ */
+export function widgetRowActivation(onActivate: () => void) {
+  return {
+    role: "button",
+    tabIndex: 0,
+    onClick: onActivate,
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (event.target !== event.currentTarget) return
+      if (event.key !== "Enter" && event.key !== " ") return
+      event.preventDefault()
+      onActivate()
+    },
+  } as const
+}
+
+/**
+ * The kebab at the end of a row. It opens the row's context menu, so the menu
+ * is there for touch and for anyone who never right-clicks. It shows on hover
+ * or keyboard focus, and always on devices that can't hover (an iPad at desktop
+ * width included, which a breakpoint would miss). The row needs `group`.
+ */
+export function WidgetRowMenuButton({ label }: { label: string }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="none"
+      aria-label={label}
+      title={label}
+      onClick={openContextMenuFromButton}
+      className="!h-auto !w-auto shrink-0 border-border/0 text-muted-foreground opacity-0 transition-opacity duration-150 hover:!border-border/0 hover:!bg-transparent hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+    >
+      <Ellipsis className="w-4" />
+    </Button>
+  )
+}

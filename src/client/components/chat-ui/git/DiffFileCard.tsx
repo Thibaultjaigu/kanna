@@ -1,5 +1,5 @@
 import { PatchDiff } from "@pierre/diffs/react"
-import { Ban, ChevronDown, ChevronUp, Code, Copy, Ellipsis, FolderOpen, LoaderCircle, Trash2 } from "lucide-react"
+import { Ban, ChevronDown, ChevronUp, Code, Copy, Ellipsis, FolderOpen, Trash2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react"
 import type { ChatAttachment } from "../../../../shared/types"
 import { cn } from "../../../lib/utils"
@@ -7,6 +7,8 @@ import { AttachmentFileCard, AttachmentImageCard } from "../../messages/Attachme
 import { AttachmentPreviewModal } from "../../messages/AttachmentPreviewModal"
 import { classifyAttachmentPreview } from "../../messages/attachmentPreview"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../../ui/context-menu"
+import { Skeleton } from "../../ui/skeleton"
+import { EDGE_ROW_HOVER_CLASS } from "../widgets/WidgetCard"
 import { DiffFileStat, StageCheckbox, type DiffFile, type DiffRenderMode } from "./shared"
 
 export function shouldLoadDiffPatchNow(args: {
@@ -42,6 +44,31 @@ function getDiffPreviewAttachment(projectId: string | null, file: DiffFile): Cha
     mimeType: file.mimeType,
     size: file.size,
   }
+}
+
+// A hunk's shape: a header, then lines of uneven length, indented like code.
+const SKELETON_DIFF_LINES = [
+  { indent: 0, width: "38%" },
+  { indent: 1, width: "64%" },
+  { indent: 1, width: "52%" },
+  { indent: 2, width: "71%" },
+  { indent: 2, width: "44%" },
+  { indent: 1, width: "30%" },
+]
+
+/** The patch while it loads, in the diff's own line rhythm so it lands in place. */
+function DiffPatchSkeleton() {
+  return (
+    <div className="space-y-2 px-3 py-3" aria-busy aria-label="Loading diff">
+      <Skeleton className="h-3 w-24 bg-foreground/[0.05]" />
+      {SKELETON_DIFF_LINES.map((line, index) => (
+        <div key={index} className="flex items-center gap-3">
+          <Skeleton className="h-3 w-5 shrink-0 bg-foreground/[0.05]" />
+          <Skeleton className="h-3" style={{ marginLeft: `${line.indent * 12}px`, width: line.width }} />
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export interface DiffFileActions {
@@ -152,36 +179,15 @@ export function DiffFileCard({
     }))
   }
 
+  // Opens at once. A patch not loaded yet shows as a skeleton in the body
+  // while it loads (the effect above starts it on expand), rather than the
+  // row waiting behind a spinner and then jumping open.
   function handleToggleRequest() {
-    if (!isCollapsed) {
-      onToggleCollapsed()
-      return
+    // A failed load doesn't retry by itself; opening the row again does.
+    if (isCollapsed && patchError !== undefined && !isPatchLoading && !hasPreviewAttachment) {
+      void onLoadPatch(file.path).catch(() => {})
     }
-
-    if (hasPreviewAttachment || patch !== undefined) {
-      onToggleCollapsed()
-      return
-    }
-
-    if (isPatchLoading) {
-      return
-    }
-
-    const shouldLoadBeforeExpand = patchError !== undefined || shouldLoadDiffPatchNow({
-      isCollapsed: false,
-      hasPreviewAttachment,
-      patch,
-      patchError,
-      isPatchLoading,
-    })
-    if (!shouldLoadBeforeExpand) {
-      onToggleCollapsed()
-      return
-    }
-
-    void onLoadPatch(file.path).then(() => {
-      onToggleCollapsed()
-    }).catch(() => {})
+    onToggleCollapsed()
   }
 
   return (
@@ -198,7 +204,10 @@ export function DiffFileCard({
               handleToggleRequest()
             }}
             className={cn(
-              "group/header sticky top-0 z-20 flex cursor-pointer items-center justify-between gap-3 bg-background pl-[13px] pr-4 py-2 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+              // The divider above the row is the header's own border, not the
+              // list's: inside the hover target, so it's no dead line.
+              "group/header sticky top-0 z-20 flex cursor-pointer items-center justify-between gap-3 border-t border-border bg-background pl-[11px] pr-4 py-2 text-[13px] text-muted-foreground hover:text-foreground",
+              EDGE_ROW_HOVER_CLASS,
               !isCollapsed && "border-b border-border/50"
             )}
           >
@@ -207,7 +216,7 @@ export function DiffFileCard({
                 checked={isChecked}
                 onClick={onToggleChecked}
               />
-              <div className="min-w-0 truncate select-none ml-2 mr-1">{file.path}</div>
+              <div className="min-w-0 truncate select-none ml-[7px] mr-1">{file.path}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2 select-none">
               <DiffFileStat additions={file.additions} deletions={file.deletions} />
@@ -219,9 +228,7 @@ export function DiffFileCard({
               >
                 <Ellipsis className="h-3.5 w-3.5 shrink-0" />
               </button>
-              {isPatchLoading && isCollapsed && !previewAttachment ? (
-                <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              ) : isCollapsed ? (
+              {isCollapsed ? (
                 <ChevronDown className="h-3.5 w-3.5 shrink-0" />
               ) : (
                 <ChevronUp className="h-3.5 w-3.5 shrink-0" />
@@ -246,10 +253,7 @@ export function DiffFileCard({
                 </div>
               ) : (
                 isPatchLoading ? (
-                  <div className="flex items-center justify-center px-3 py-8 text-sm text-muted-foreground">
-                    <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
-                    Loading diff...
-                  </div>
+                  <DiffPatchSkeleton />
                 ) : patchError ? (
                   <div className="px-3 py-4 text-sm text-destructive">{patchError}</div>
                 ) : patch !== undefined ? (
