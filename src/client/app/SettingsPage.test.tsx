@@ -97,9 +97,9 @@ describe("nightly status in Labs", () => {
       expect(html).not.toContain("Last checked")
     }
     if (nightly?.status === "up_to_date") {
-      expect(html).not.toContain("Build Latest")
+      expect(html).not.toContain("Build latest")
     } else {
-      expect(html).toContain("Build Latest")
+      expect(html).toContain("Build latest")
     }
     if (nightly?.status !== "up_to_date") expect(html).not.toContain("Latest nightly installed")
   })
@@ -207,7 +207,7 @@ describe("SkillsSection", () => {
       />
     )
 
-    expect(html).toContain("Installed")
+    expect(html).toContain("No global skills installed yet")
     expect(html).toContain("Add skills from skills.sh")
     expect(html).toContain("searchbox")
   })

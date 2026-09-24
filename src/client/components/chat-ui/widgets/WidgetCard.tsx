@@ -1,9 +1,7 @@
-import { ChevronRight, Ellipsis } from "lucide-react"
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
+import { ChevronRight } from "lucide-react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { cn } from "../../../lib/utils"
 import { useRightSidebarStore, type WidgetDisclosureId } from "../../../stores/rightSidebarStore"
-import { openContextMenuFromButton } from "../../open-external-menu"
-import { Button } from "../../ui/button"
 
 /**
  * Widgets in the right sidebar's column.
@@ -22,12 +20,11 @@ import { Button } from "../../ui/button"
  *   word goes after the number ("3 of 5 running", "2 unpushed").
  * - Running: the red `text-logo` spinner the left sidebar shows for a busy
  *   chat. Done is `text-success`, failed is `text-destructive`.
- * - Rows touch. No gap, space-y or margin between rows (or tiles, or menu
- *   items): the pointer crossing a gap unlights the row, and a list that
- *   flickers off between rows feels broken. Spacing goes inside the row, as
- *   padding, and a divider belongs to the element that carries the hover.
- * - Row actions: a context menu on the row, opened from a kebab
- *   (WidgetRowMenuButton) for pointers that can't right-click.
+ * - Bodies are built from the parts in parts.tsx (Strip, List of Rows,
+ *   Static, Footer), never from ad hoc padding, dividers or hover classes.
+ *   Rows sit 1px apart and no more, so a highlight never visibly drops out.
+ * - Row actions: a context menu on the row, opened from a kebab for
+ *   pointers that can't right-click (WidgetRow's `menu`).
  * - Disclosures start open when they hold a few rows and closed when they
  *   hold many (defaultWidgetExpanded). Once toggled, they remember it per project.
  * - Status changes (spinner to check, a label that swaps) cross-fade through
@@ -254,72 +251,4 @@ export function useWidgetExpanded(
     if (projectId) setWidgetExpanded(projectId, id, next)
   }, [id, projectId, setWidgetExpanded])
   return [expanded, setExpanded]
-}
-
-/**
- * The one row highlight in the column: the outline button's hover (Merge
- * into…, the commit button), a muted fill inside a border. Every row in every
- * widget uses it, for hover and for a keyboard cursor alike.
- *
- * Inset rows (rounded, inside a padded body) take both and carry a
- * transparent border at rest so nothing shifts. Rows that run edge to edge
- * between dividers take the fill only: a border there would double the
- * divider.
- *
- * Instant, with no transition: a pointer sweeps down a list, and a fade
- * leaves a trail of half-lit rows behind it. The button keeps its short fade;
- * it is one target, not a list.
- */
-export const ROW_HIGHLIGHT_CLASS = "border-border bg-muted"
-export const ROW_HOVER_CLASS = "hover:border-border hover:bg-muted"
-export const EDGE_ROW_HOVER_CLASS = "hover:bg-muted"
-
-/**
- * A row inside a widget body (a p-1.5 body), matching the left sidebar's row
- * look. Its geometry lines up with the header: 6px body padding + 1px border
- * + 5px puts a leading 16px icon at 12px, the header icon's inset, so both
- * share a centerline; the 8px gap then starts the label where the title does.
- */
-export const WIDGET_ROW_CLASS =
-  `flex w-full min-w-0 items-center gap-2 rounded-lg border border-transparent px-[5px] py-1.5 text-left text-sm ${ROW_HOVER_CLASS}`
-
-/**
- * Makes a row element a button without being a <button>: rows carry a kebab
- * (WidgetRowMenuButton), and a button can't hold another. Enter and Space on
- * the kebab stay the kebab's.
- */
-export function widgetRowActivation(onActivate: () => void) {
-  return {
-    role: "button",
-    tabIndex: 0,
-    onClick: onActivate,
-    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
-      if (event.target !== event.currentTarget) return
-      if (event.key !== "Enter" && event.key !== " ") return
-      event.preventDefault()
-      onActivate()
-    },
-  } as const
-}
-
-/**
- * The kebab at the end of a row. It opens the row's context menu, so the menu
- * is there for touch and for anyone who never right-clicks. It shows on hover
- * or keyboard focus, and always on devices that can't hover (an iPad at desktop
- * width included, which a breakpoint would miss). The row needs `group`.
- */
-export function WidgetRowMenuButton({ label }: { label: string }) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="none"
-      aria-label={label}
-      title={label}
-      onClick={openContextMenuFromButton}
-      className="!h-auto !w-auto shrink-0 border-border/0 text-muted-foreground opacity-0 transition-opacity duration-150 hover:!border-border/0 hover:!bg-transparent hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
-    >
-      <Ellipsis className="w-4" />
-    </Button>
-  )
 }

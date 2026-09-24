@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Loader2 } from "lucide-react"
 import {
   chatModeFromFlags,
   chatModeToFlags,
@@ -7,6 +8,7 @@ import {
   PROVIDERS,
   type AgentProvider,
   type ChatMode,
+  type GrokReasoningEffort,
   type LlmProviderKind,
 } from "../../../shared/types"
 import { AuthCard } from "../../components/auth/AuthCard"
@@ -15,6 +17,7 @@ import { DefaultModelsDialog } from "../../components/DefaultModelsDialog"
 import { Button } from "../../components/ui/button"
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogTitle } from "../../components/ui/dialog"
 import { Input } from "../../components/ui/input"
+import { SettingsHeaderButton } from "../../components/ui/settings-header-button"
 import {
   Select,
   SelectContent,
@@ -27,7 +30,15 @@ import { cn } from "../../lib/utils"
 import { useChatPreferencesStore } from "../../stores/chatPreferencesStore"
 import { useProviderAuthStore } from "../../stores/providerAuthStore"
 import type { KannaState } from "../useKannaState"
-import { handleSettingsInputKeyDown, SettingsErrorBanner, SettingsRow } from "./shared"
+import {
+  handleSettingsInputKeyDown,
+  SETTINGS_CONTROL_CLASS,
+  SettingsErrorBanner,
+  SettingsGroup,
+  SettingsGroups,
+  SettingsNotice,
+  SettingsRow,
+} from "./shared"
 import { SETTINGS_ROWS } from "./registry"
 
 const QUICK_RESPONSE_PROVIDER_OPTIONS: Array<{ value: LlmProviderKind; label: string }> = [
@@ -172,7 +183,7 @@ export function ProvidersSection({
       </span>
       <span
         className={cn(
-          "mt-2 block text-sm font-medium",
+          "mt-1 block font-medium",
           llmValidationStatus === "valid"
             ? "text-emerald-600 dark:text-emerald-400"
             : llmValidationStatus === "invalid"
@@ -191,7 +202,7 @@ export function ProvidersSection({
                 <button
                   type="button"
                   onClick={() => setLlmValidationDialogOpen(true)}
-                  className="underline underline-offset-2"
+                  className="underline underline-offset-2 transition-colors hover:opacity-70"
                 >
                   See error
                 </button>
@@ -206,43 +217,54 @@ export function ProvidersSection({
   return (
     <>
       {providersError ? <SettingsErrorBanner message={providersError} /> : null}
-      <div className="space-y-3 pb-6">
-        {providerAuthSnapshot ? (
-          providerAuthSnapshot.services.map((service) => (
-            <AuthCard key={service.service} service={service} socket={state.socket} />
-          ))
-        ) : (
-          <div className="rounded-2xl border border-border bg-card/40 px-5 py-6 text-sm text-muted-foreground">
-            Checking provider sign-in status…
-          </div>
-        )}
-      </div>
-      <div className="border-b border-border">
-        <SettingsRow def={SETTINGS_ROWS.defaultProvider} bordered={false}>
-          <Select
-            value={defaultProvider}
-            onValueChange={(value) => handleDefaultProviderChange(value as "last_used" | AgentProvider)}
-          >
-            <SelectTrigger className="min-w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="last_used">
-                  Last Used
-                </SelectItem>
-                {PROVIDERS.map((provider) => (
-                  <SelectItem key={provider.id} value={provider.id}>
-                    {provider.label}
+      <SettingsGroups>
+        <SettingsGroup title="Accounts">
+          {providerAuthSnapshot ? (
+            providerAuthSnapshot.services.map((service) => (
+              // One surface for every account: each card drops its own
+              // border and fill and becomes a row of the group's card. The
+              // wrapper carries the group's divider — border-0 on the card
+              // itself would also wipe out divide-y's line.
+              <div key={service.service}>
+                <AuthCard
+                  service={service}
+                  socket={state.socket}
+                  className="rounded-none border-0 bg-transparent px-4 py-3.5"
+                />
+              </div>
+            ))
+          ) : (
+            <div className="flex items-center gap-3 px-4 py-3.5 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              Checking provider sign-in status…
+            </div>
+          )}
+        </SettingsGroup>
+        <SettingsGroup title="Defaults">
+          <SettingsRow def={SETTINGS_ROWS.defaultProvider}>
+            <Select
+              value={defaultProvider}
+              onValueChange={(value) => handleDefaultProviderChange(value as "last_used" | AgentProvider)}
+            >
+              <SelectTrigger className={SETTINGS_CONTROL_CLASS}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="last_used">
+                    Last Used
                   </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </SettingsRow>
+                  {PROVIDERS.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      {provider.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </SettingsRow>
 
-        <SettingsRow def={SETTINGS_ROWS.claudeDefaults} alignStart>
-          <div className="">
+          <SettingsRow def={SETTINGS_ROWS.claudeDefaults} alignStart>
             <ChatPreferenceControls
               availableProviders={state.availableProviders}
               selectedProvider="claude"
@@ -267,11 +289,9 @@ export function ProvidersSection({
               includeMode
               className="justify-start flex-wrap"
             />
-          </div>
-        </SettingsRow>
+          </SettingsRow>
 
-        <SettingsRow def={SETTINGS_ROWS.codexDefaults} alignStart>
-          <div className="">
+          <SettingsRow def={SETTINGS_ROWS.codexDefaults} alignStart>
             <ChatPreferenceControls
               availableProviders={state.availableProviders}
               selectedProvider="codex"
@@ -294,11 +314,9 @@ export function ProvidersSection({
               includeMode
               className="justify-start flex-wrap"
             />
-          </div>
-        </SettingsRow>
+          </SettingsRow>
 
-        <SettingsRow def={SETTINGS_ROWS.cursorDefaults} alignStart>
-          <div className="">
+          <SettingsRow def={SETTINGS_ROWS.cursorDefaults} alignStart>
             <ChatPreferenceControls
               availableProviders={state.availableProviders}
               selectedProvider="cursor"
@@ -317,11 +335,36 @@ export function ProvidersSection({
               mode={chatModeFromFlags(providerDefaults.cursor.planMode, providerDefaults.cursor.autoPlan)}
               className="justify-start flex-wrap"
             />
-          </div>
-        </SettingsRow>
+          </SettingsRow>
 
-        <SettingsRow def={SETTINGS_ROWS.piDefaults} alignStart>
-          <div className="">
+          <SettingsRow def={SETTINGS_ROWS.grokDefaults} alignStart>
+            <ChatPreferenceControls
+              availableProviders={state.availableProviders}
+              selectedProvider="grok"
+              showProviderPicker={false}
+              providerLocked
+              model={providerDefaults.grok.model}
+              modelOptions={providerDefaults.grok.modelOptions}
+              onModelChange={(_, model) => {
+                handleProviderDefaultModelChange("grok", model)
+              }}
+              onModelOptionChange={(change) => {
+                // Grok's effort picker reports through the codex change type
+                // (see reasoningChangeFor in ChatPreferenceControls).
+                if (change.type === "codexReasoningEffort") {
+                  handleProviderDefaultModelOptionsChange("grok", {
+                    reasoningEffort: change.effort as GrokReasoningEffort,
+                  })
+                }
+              }}
+              mode={chatModeFromFlags(providerDefaults.grok.planMode, providerDefaults.grok.autoPlan)}
+              onModeChange={(mode) => handleProviderDefaultModeChange("grok", mode)}
+              includeMode
+              className="justify-start flex-wrap"
+            />
+          </SettingsRow>
+
+          <SettingsRow def={SETTINGS_ROWS.piDefaults} alignStart>
             <ChatPreferenceControls
               availableProviders={state.availableProviders}
               selectedProvider="pi"
@@ -341,72 +384,78 @@ export function ProvidersSection({
               mode={chatModeFromFlags(providerDefaults.pi.planMode, providerDefaults.pi.autoPlan)}
               className="justify-start flex-wrap"
             />
-          </div>
-        </SettingsRow>
+          </SettingsRow>
+        </SettingsGroup>
 
-        <SettingsRow def={SETTINGS_ROWS.modelRegistry} description={llmValidationDescription} alignStart>
-          <div className="flex w-full  flex-col gap-3">
-            {llmProviderError ? (
-              <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                {llmProviderError}
-              </div>
-            ) : null}
-            {llmProvider?.warning ? (
-              <div className="rounded-lg border border-border bg-card/30 px-4 py-3 text-sm text-muted-foreground">
-                {llmProvider.warning}
-              </div>
-            ) : null}
-            <Select value={llmProviderDraft.provider} onValueChange={(value) => handleLlmProviderSelection(value as LlmProviderKind)}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {QUICK_RESPONSE_PROVIDER_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            {llmProviderDraft.provider === "custom" ? (
+        <SettingsGroup title="Model Registry">
+          {llmProviderError || llmProvider?.warning ? (
+            <div className="space-y-3 p-4">
+              {llmProviderError ? <SettingsNotice>{llmProviderError}</SettingsNotice> : null}
+              {llmProvider?.warning ? <SettingsNotice tone="warning">{llmProvider.warning}</SettingsNotice> : null}
+            </div>
+          ) : null}
+          <SettingsRow def={SETTINGS_ROWS.modelRegistry} description={llmValidationDescription} alignStart>
+            <div className="flex w-full flex-col gap-2 @2xl:w-60">
+              <Select value={llmProviderDraft.provider} onValueChange={(value) => handleLlmProviderSelection(value as LlmProviderKind)}>
+                <SelectTrigger className={SETTINGS_CONTROL_CLASS}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {QUICK_RESPONSE_PROVIDER_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              {llmProviderDraft.provider === "custom" ? (
+                <Input
+                  value={llmProviderDraft.baseUrl}
+                  onChange={(event) => setLlmProviderDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+                  onBlur={() => void commitLlmProvider()}
+                  onKeyDown={(event) => handleSettingsInputKeyDown(event, () => void commitLlmProvider())}
+                  placeholder="https://your-provider.example/v1"
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="h-9"
+                />
+              ) : null}
               <Input
-                value={llmProviderDraft.baseUrl}
-                onChange={(event) => setLlmProviderDraft((current) => ({ ...current, baseUrl: event.target.value }))}
+                type="password"
+                value={llmProviderDraft.apiKey}
+                onChange={(event) => setLlmProviderDraft((current) => ({ ...current, apiKey: event.target.value }))}
                 onBlur={() => void commitLlmProvider()}
                 onKeyDown={(event) => handleSettingsInputKeyDown(event, () => void commitLlmProvider())}
-                placeholder="https://your-provider.example/v1"
+                placeholder="API key"
+                autoComplete="off"
+                className="h-9"
               />
-            ) : null}
-            <Input
-              type="password"
-              value={llmProviderDraft.apiKey}
-              onChange={(event) => setLlmProviderDraft((current) => ({ ...current, apiKey: event.target.value }))}
-              onBlur={() => void commitLlmProvider()}
-              onKeyDown={(event) => handleSettingsInputKeyDown(event, () => void commitLlmProvider())}
-              placeholder="API key"
-            />
-            <Input
-              value={llmProviderDraft.model}
-              onChange={(event) => setLlmProviderDraft((current) => ({ ...current, model: event.target.value }))}
-              onBlur={() => void commitLlmProvider()}
-              onKeyDown={(event) => handleSettingsInputKeyDown(event, () => void commitLlmProvider())}
-              placeholder="Quick response model id (naming chats, commits)"
-            />
-          </div>
-        </SettingsRow>
+              <Input
+                value={llmProviderDraft.model}
+                onChange={(event) => setLlmProviderDraft((current) => ({ ...current, model: event.target.value }))}
+                onBlur={() => void commitLlmProvider()}
+                onKeyDown={(event) => handleSettingsInputKeyDown(event, () => void commitLlmProvider())}
+                placeholder="Quick response model id"
+                title="Model used for quick responses like naming chats and writing commit messages"
+                spellCheck={false}
+                autoComplete="off"
+                className="h-9"
+              />
+            </div>
+          </SettingsRow>
 
-        <SettingsRow def={SETTINGS_ROWS.defaultModels}>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setDefaultModelsDialogOpen(true)}
+          <SettingsRow
+            def={SETTINGS_ROWS.defaultModels}
+            description={`${SETTINGS_ROWS.defaultModels.description} ${selectedDefaultModelCount} selected.`}
           >
-            {selectedDefaultModelCount} selected
-          </Button>
-        </SettingsRow>
-      </div>
+            <SettingsHeaderButton onClick={() => setDefaultModelsDialogOpen(true)}>
+              Edit models
+            </SettingsHeaderButton>
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsGroups>
       <Dialog open={llmValidationDialogOpen} onOpenChange={setLlmValidationDialogOpen}>
         <DialogContent size="lg">
           <DialogBody className="space-y-4">

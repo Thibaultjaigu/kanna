@@ -120,6 +120,8 @@ export type ClientCommand =
   | { type: "project.remove"; localPath: string }
   | { type: "sidebar.reorderProjectGroups"; projectIds: string[] }
   | { type: "project.readDiffPatch"; projectId: string; path: string }
+  | { type: "project.readCommit"; projectId: string; sha: string }
+  | { type: "project.readBranch"; projectId: string; branch: SelectedBranch }
   // Committing is addressed by project, not by chat: the diff panel's file
   // selection belongs to the project it is rendering, and the active chat can
   // move to another project mid-flow (notably across the "generate a message"

@@ -12,6 +12,11 @@ import type {
   ChatCheckoutBranchResult,
   ChatCreateBranchResult,
   ChatCommitChecks,
+  ChatCommitDetails,
+  ChatCommitFile,
+  ChatBranchDetails,
+  ChatBranchDivergence,
+  ChatPullRequestDetails,
   ChatDiffFile,
   ChatDiffSnapshot,
   BranchActionSuccess,
@@ -568,6 +573,7 @@ export function extractGitHubRepoSlug(remoteUrl: string | null | undefined) {
 interface GitHubPullRequestResponseItem {
   number: number
   title: string
+  user?: { login?: string } | null
   head?: {
     ref?: string
     label?: string
@@ -635,6 +641,83 @@ export async function fetchGitHubPullRequests(
 
   const json = await response.json()
   return Array.isArray(json) ? json as GitHubPullRequestResponseItem[] : []
+}
+
+interface GitHubPullRequestDetailResponse {
+  number: number
+  title: string
+  body?: string | null
+  html_url: string
+  user?: { login?: string } | null
+  draft?: boolean
+  base?: { ref?: string }
+  head?: { sha?: string }
+  created_at?: string
+  updated_at?: string
+  additions?: number
+  deletions?: number
+  changed_files?: number
+  commits?: number
+  comments?: number
+  mergeable_state?: string
+  labels?: Array<{ name?: string }>
+}
+
+/**
+ * GitHub display names by login, for PR rows: the list endpoint only has the
+ * login, and History shows commit authors by their full names, so PRs should
+ * too. Names rarely change; a server lifetime is fresh enough. `null` means
+ * "looked, has no name set", so it isn't asked again.
+ */
+const gitHubNameCache = new Map<string, string | null>()
+
+async function resolveGitHubNames(logins: readonly string[]): Promise<ReadonlyMap<string, string>> {
+  // Real user logins only: bots ("dependabot[bot]") aren't users to GraphQL,
+  // and the pattern keeps anything else out of the query text.
+  const valid = [...new Set(logins)].filter((login) => /^[A-Za-z0-9-]{1,39}$/u.test(login))
+  const missing = valid.filter((login) => !gitHubNameCache.has(login))
+  if (missing.length > 0) {
+    const query = `query { ${missing.map((login, index) => `u${index}: user(login: "${login}") { name }`).join(" ")} }`
+    try {
+      const result = await runCommand(["gh", "api", "graphql", "-f", `query=${query}`])
+      // One unknown login fails its alias and makes gh exit non-zero, but the
+      // rest still come back in `data`.
+      const data = (JSON.parse(result.stdout || "{}") as { data?: Record<string, { name?: string | null } | null> }).data ?? {}
+      missing.forEach((login, index) => gitHubNameCache.set(login, data[`u${index}`]?.name?.trim() || null))
+    } catch {
+      // No gh, or no network: logins it is, and the next list tries again.
+    }
+  }
+  return new Map(valid.flatMap((login) => {
+    const name = gitHubNameCache.get(login)
+    return name ? [[login, name] as const] : []
+  }))
+}
+
+/** One pull request, with what the list endpoint leaves out (size, merge state). */
+export async function fetchGitHubPullRequest(
+  repoSlug: string,
+  number: number,
+  deps: { fetchImpl?: FetchLike; ghApiImpl?: (path: string) => Promise<unknown | null> } = {},
+): Promise<GitHubPullRequestDetailResponse> {
+  const path = `repos/${repoSlug}/pulls/${number}`
+  const ghApiImpl = deps.ghApiImpl ?? (async (apiPath: string) => {
+    const result = await runCommand(["gh", "api", "-H", "Accept: application/vnd.github+json", apiPath])
+    return result.exitCode === 0 ? JSON.parse(result.stdout) : null
+  })
+  try {
+    const viaGh = await ghApiImpl(path)
+    if (viaGh) return viaGh as GitHubPullRequestDetailResponse
+  } catch {
+    // Fall back to an unauthenticated request when `gh` is unavailable.
+  }
+  const response = await (deps.fetchImpl ?? fetch)(`https://api.github.com/${path}`, {
+    headers: { Accept: "application/vnd.github+json" },
+  })
+  if (!response.ok) {
+    throw new Error(`GitHub pull request request failed with status ${response.status}`)
+  }
+  return await response.json() as GitHubPullRequestDetailResponse
 }
 
 function buildGitHubCommitUrl(remoteUrl: string | null, sha: string) {
@@ -983,6 +1066,47 @@ function parseNumstatValue(value: string) {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+/**
+ * `git … --numstat -z` output as rows. A rename is a header with no path of
+ * its own ("adds\tdels\t"), followed by the old path and the new one.
+ */
+function parseNumstatZ(stdout: string): ChatCommitFile[] {
+  const files: ChatCommitFile[] = []
+  const tokens = stdout.split("\u0000")
+  for (let index = 0; index < tokens.length;) {
+    const header = tokens[index++] ?? ""
+    if (!header) continue
+    const [additionsValue, deletionsValue, pathValue = ""] = header.split("\t")
+    if (typeof additionsValue !== "string" || typeof deletionsValue !== "string") continue
+    const additions = parseNumstatValue(additionsValue)
+    const deletions = parseNumstatValue(deletionsValue)
+    if (pathValue) {
+      files.push({ path: pathValue, additions, deletions })
+      continue
+    }
+    const previousPath = tokens[index++] ?? ""
+    const nextPath = tokens[index++] ?? ""
+    if (!nextPath) continue
+    files.push({ path: nextPath, previousPath: previousPath || undefined, additions, deletions })
+  }
+  return files
+}
+
+/** Commits only in `ref` (ahead) and only in `baseRef` (behind). */
+async function countDivergence(repoRoot: string, baseRef: string, ref: string, name: string): Promise<ChatBranchDivergence | undefined> {
+  const result = await runGit(["rev-list", "--left-right", "--count", `${baseRef}...${ref}`, "--"], repoRoot)
+  if (result.exitCode !== 0) return undefined
+  const [behind = "0", ahead = "0"] = result.stdout.trim().split(/\s+/u)
+  return { name, ahead: Number(ahead), behind: Number(behind) }
+}
+
+/**
+ * Files a commit's hover card lists; the rest are counted, not sent. The
+ * left sidebar's chat card lists as many (CHAT_TOUCHED_FILES_LIMIT), the
+ * biggest first, and a hover card is not a place to scroll.
+ */
+export const COMMIT_DETAILS_FILE_LIMIT = 8
+
 const FILE_SCAN_CONCURRENCY = 32
 /** Commits sent with the branch history: the History widget shows 5, then all of these. */
 export const BRANCH_HISTORY_LIMIT = 25
@@ -1249,29 +1373,8 @@ async function getTrackedDiffStats(repoRoot: string, baseCommit: string | null) 
     throw new Error(result.stderr.trim() || "Failed to read git diff stats")
   }
 
-  const tokens = result.stdout.split("\u0000")
-  for (let index = 0; index < tokens.length;) {
-    const header = tokens[index++] ?? ""
-    if (!header) continue
-
-    const [additionsValue, deletionsValue, pathValue = ""] = header.split("\t")
-    if (typeof additionsValue !== "string" || typeof deletionsValue !== "string") continue
-
-    if (pathValue) {
-      statsByPath.set(pathValue, {
-        additions: parseNumstatValue(additionsValue),
-        deletions: parseNumstatValue(deletionsValue),
-      })
-      continue
-    }
-
-    index += 1
-    const nextPath = tokens[index++] ?? ""
-    if (!nextPath) continue
-    statsByPath.set(nextPath, {
-      additions: parseNumstatValue(additionsValue),
-      deletions: parseNumstatValue(deletionsValue),
-    })
+  for (const file of parseNumstatZ(result.stdout)) {
+    statsByPath.set(file.path, { additions: file.additions, deletions: file.deletions })
   }
 
   return statsByPath
@@ -1748,6 +1851,154 @@ export class DiffStore {
     return { patch }
   }
 
+  /**
+   * One commit, for the History row's hover card: author email, a committer
+   * when it isn't the author, how many parents it has, and the files it
+   * changed against its first parent (so a merge lists what it brought in).
+   */
+  async readCommit(args: { projectPath: string; sha: string }): Promise<ChatCommitDetails> {
+    // Only ever a hash from the history snapshot. Anything else is refused
+    // rather than handed to git, where it could read as an option or a range.
+    if (!/^[0-9a-f]{7,64}$/i.test(args.sha)) {
+      throw new Error("Not a commit hash")
+    }
+    const repo = await resolveRepo(args.projectPath)
+    if (!repo) {
+      throw new Error("Project is not in a git repository")
+    }
+
+    const meta = await runGit(["show", "-s", "--format=%H%x00%ae%x00%cn%x00%an%x00%cI%x00%P", args.sha, "--"], repo.repoRoot)
+    if (meta.exitCode !== 0) {
+      throw new Error(meta.stderr.trim() || "Failed to read the commit")
+    }
+    const [sha = args.sha, authorEmail, committerName, authorName, committedAt, parents = ""] = meta.stdout.trim().split("\u0000")
+
+    // `--root` so the first commit lists its files, and first-parent so a
+    // merge shows what it brought in rather than nothing.
+    const stats = await runGit(
+      ["diff-tree", "-r", "--numstat", "-z", "-M", "--root", "--diff-merges=first-parent", args.sha, "--"],
+      repo.repoRoot,
+    )
+    const files = stats.exitCode === 0 ? parseNumstatZ(stats.stdout) : []
+    // Biggest first, as the sidebar's chat card: with only a few shown, the
+    // substantial ones are the ones worth the room. Ties on path, so the list
+    // holds still.
+    const churn = (file: ChatCommitFile) => file.additions + file.deletions
+    files.sort((left, right) => churn(right) - churn(left) || left.path.localeCompare(right.path))
+
+    return {
+      sha,
+      authorEmail: authorEmail || undefined,
+      committerName: committerName && committerName !== authorName ? committerName : undefined,
+      committedAt: committedAt || undefined,
+      parentCount: parents.split(" ").filter(Boolean).length,
+      files: files.slice(0, COMMIT_DETAILS_FILE_LIMIT),
+      totalFileCount: files.length,
+      additions: files.reduce((sum, file) => sum + file.additions, 0),
+      deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+    }
+  }
+
+  /**
+   * One branch picker row, for its hover card. For a local or remote branch,
+   * its tip and how it stands against the default branch (and, local, its
+   * upstream). For a pull request, the PR as GitHub has it, checks included.
+   */
+  async readBranch(args: { projectPath: string; branch: SelectedBranch }): Promise<ChatBranchDetails> {
+    const repo = await resolveRepo(args.projectPath)
+    if (!repo) {
+      throw new Error("Project is not in a git repository")
+    }
+
+    if (args.branch.kind === "pull_request") {
+      const repoSlug = extractGitHubRepoSlug(await getOriginRemoteUrl(repo.repoRoot))
+      if (!repoSlug) return {}
+      let pr = await fetchGitHubPullRequest(repoSlug, args.branch.prNumber)
+      // GitHub computes mergeability on demand: the first read of a PR it
+      // hasn't looked at lately says "unknown" and starts the work. Ask once
+      // more after a moment, so the row's icon says something.
+      if (pr.mergeable_state === "unknown") {
+        await new Promise((resolve) => setTimeout(resolve, 1_500))
+        pr = await fetchGitHubPullRequest(repoSlug, args.branch.prNumber).catch(() => pr)
+      }
+      let checks: ChatPullRequestDetails["checks"]
+      const headSha = pr.head?.sha
+      if (headSha) {
+        // The same rollup History shows per commit, for the PR's head.
+        await commitChecksStore.refresh(repoSlug, [headSha]).catch(() => {})
+        checks = commitChecksStore.read(repoSlug, [headSha]).get(headSha)
+      }
+      return {
+        pullRequest: {
+          number: pr.number,
+          title: pr.title,
+          // GitHub stores bodies with CRLF line ends.
+          body: pr.body?.replace(/\r\n/gu, "\n").trim() || undefined,
+          url: pr.html_url,
+          authorLogin: pr.user?.login,
+          isDraft: Boolean(pr.draft),
+          baseRefName: pr.base?.ref,
+          createdAt: pr.created_at,
+          updatedAt: pr.updated_at,
+          additions: pr.additions,
+          deletions: pr.deletions,
+          changedFiles: pr.changed_files,
+          commits: pr.commits,
+          comments: pr.comments,
+          mergeableState: pr.mergeable_state,
+          checks,
+          labels: (pr.labels ?? []).map((label) => label.name ?? "").filter(Boolean),
+        },
+      }
+    }
+
+    // Full ref names only, checked by git: a name from the list can't then
+    // be read as an option or a revision range.
+    const ref = args.branch.kind === "local" ? `refs/heads/${args.branch.name}` : `refs/remotes/${args.branch.remoteRef}`
+    if ((await runGit(["check-ref-format", ref], repo.repoRoot)).exitCode !== 0) {
+      throw new Error("Not a branch name")
+    }
+
+    const [tip, defaultBranchName] = await Promise.all([
+      runGit(["log", "-1", "--format=%H%x00%s%x00%an%x00%aI", ref, "--"], repo.repoRoot),
+      resolveDefaultBranchName(repo.repoRoot),
+    ])
+    const [sha, summary = "", authorName, authoredAt = ""] = tip.exitCode === 0 ? tip.stdout.trim().split("\u0000") : []
+    const details: ChatBranchDetails = sha
+      ? { lastCommit: { sha, summary, authorName: authorName || undefined, authoredAt } }
+      : {}
+
+    if (defaultBranchName && args.branch.name !== defaultBranchName) {
+      // Against origin's copy when there is one: that is what a PR from this
+      // branch would be measured against.
+      const originBase = `refs/remotes/origin/${defaultBranchName}`
+      const baseRef = (await runGit(["rev-parse", "--verify", "--quiet", originBase], repo.repoRoot)).exitCode === 0
+        ? originBase
+        : `refs/heads/${defaultBranchName}`
+      details.base = await countDivergence(repo.repoRoot, baseRef, ref, defaultBranchName)
+    }
+
+    if (args.branch.kind === "local") {
+      const tracking = await runGit(
+        ["for-each-ref", "--format=%(upstream:short)%00%(upstream:track,nobracket)", ref],
+        repo.repoRoot,
+      )
+      const [upstreamName = "", track = ""] = tracking.stdout.trim().split("\u0000")
+      if (upstreamName) {
+        details.upstream = {
+          name: upstreamName,
+          ahead: Number(/ahead (\d+)/u.exec(track)?.[1] ?? 0),
+          behind: Number(/behind (\d+)/u.exec(track)?.[1] ?? 0),
+          gone: track === "gone",
+        }
+      }
+    } else if ((await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${args.branch.name}`], repo.repoRoot)).exitCode === 0) {
+      details.localBranchName = args.branch.name
+    }
+
+    return details
+  }
+
   getProjectSnapshot(projectId: string): ChatDiffSnapshot {
     const state = this.states.get(projectId) ?? createEmptyState()
     return {
@@ -2081,6 +2332,7 @@ export class DiffStore {
     if (repoSlug) {
       try {
         const prs = await fetchGitHubPullRequests(repoSlug)
+        const authorNames = await resolveGitHubNames(prs.flatMap((pr) => (pr.user?.login ? [pr.user.login] : [])))
         pullRequests = prs.flatMap<ChatBranchListEntry>((pr) => {
           const headRefName = pr.head?.ref?.trim()
           if (!headRefName) return []
@@ -2115,6 +2367,8 @@ export class DiffStore {
             remoteRef,
             prNumber: pr.number,
             prTitle: pr.title,
+            authorLogin: pr.user?.login?.trim() || undefined,
+            authorName: pr.user?.login ? authorNames.get(pr.user.login) : undefined,
             headRefName,
             headLabel: pr.head?.label?.trim() || fullName,
             headRepoCloneUrl: cloneUrl,

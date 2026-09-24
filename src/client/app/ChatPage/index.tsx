@@ -24,6 +24,9 @@ import {
   useRightSidebarStore,
   useWidgetsOpen,
 } from "../../stores/rightSidebarStore"
+import { ViewerLayer, useViewerOpen } from "../../components/viewer/ViewerLayer"
+import { useViewerUrlSync } from "../../components/viewer/viewerUrl"
+import type { DiffViewerContext } from "../../components/chat-ui/git/DiffViewer"
 import { useProjectRepoUrl } from "../../stores/sidebarStore"
 import { DEFAULT_PROJECT_TERMINAL_LAYOUT, useTerminalLayoutStore } from "../../stores/terminalLayoutStore"
 import { useTerminalPreferencesStore } from "../../stores/terminalPreferencesStore"
@@ -534,6 +537,9 @@ export function ChatPage() {
   const setTerminalSizes = useTerminalLayoutStore((store) => store.setTerminalSizes)
   const toggleWidgets = useRightSidebarStore((store) => store.toggleWidgets)
   const hideWidgets = useRightSidebarStore((store) => store.hideWidgets)
+  const viewerOpen = useViewerOpen()
+  // What's open survives a refresh: it's written to, and read from, the address.
+  useViewerUrlSync(projectId)
   const setRightSidebarSize = useRightSidebarStore((store) => store.setSize)
   const scrollback = useTerminalPreferencesStore((store) => store.scrollbackLines)
   const minColumnWidth = useTerminalPreferencesStore((store) => store.minColumnWidth)
@@ -625,6 +631,8 @@ export function ChatPage() {
     handlePreviewMergeBranch,
     handleMergeBranch,
     handleCreateBranch,
+    handleReadCommit,
+    handleReadBranch,
   } = useChatPageSidebarActions({
     state,
     projectId,
@@ -650,6 +658,18 @@ export function ChatPage() {
     enabled: state.hasSelectedProject,
     canCancel: state.canCancel,
   })
+
+  // The chat is inert while the viewer is open, so the composer can't hold
+  // focus then, and a new chat's composer mounts (and tries to take focus)
+  // before the address change closes the viewer. Hand focus back on close.
+  const wasViewerOpenRef = useRef(viewerOpen)
+  useEffect(() => {
+    const wasViewerOpen = wasViewerOpenRef.current
+    wasViewerOpenRef.current = viewerOpen
+    if (wasViewerOpen && !viewerOpen) {
+      chatInputElementRef.current?.focus({ preventScroll: true })
+    }
+  }, [viewerOpen])
 
   const enqueueDroppedFiles = useCallback((files: File[]) => {
     if (!state.hasSelectedProject || files.length === 0) {
@@ -727,6 +747,12 @@ export function ChatPage() {
     // lands somewhere visible.
     if (isMobileViewport && projectId) hideWidgets(projectId)
   }, [activeChatId, hideWidgets, isMobileViewport, navigate, projectId])
+
+  // On a phone the widget column is a sheet over the chat, and the viewer
+  // opens over the chat: close the sheet so what you opened is what you see.
+  useEffect(() => {
+    if (viewerOpen && isMobileViewport && projectId) hideWidgets(projectId)
+  }, [hideWidgets, isMobileViewport, projectId, viewerOpen])
 
   const handleRunQuickAction = useCallback((command: string) => {
     if (!projectId) return
@@ -1089,7 +1115,21 @@ export function ChatPage() {
     </Card>
   )
 
-  const workspace = projectId ? (
+  // What the viewer needs to show diffs: this project's changed files, and
+  // how to read, render and open them.
+  const diffViewerContext = useMemo<DiffViewerContext | undefined>(() => (projectId ? {
+    projectId,
+    files: state.chatDiffSnapshot?.files ?? EMPTY_DIFF_SNAPSHOT.files,
+    editorLabel: state.editorLabel,
+    diffRenderMode,
+    wrapLines: wrapDiffLines,
+    onDiffRenderModeChange: setDiffRenderMode,
+    onWrapLinesChange: setWrapDiffLines,
+    onLoadPatch: handleLoadDiffPatch,
+    onOpenFile: handleOpenDiffFile,
+  } : undefined), [diffRenderMode, handleLoadDiffPatch, handleOpenDiffFile, projectId, setDiffRenderMode, setWrapDiffLines, state.chatDiffSnapshot?.files, state.editorLabel, wrapDiffLines])
+
+  const chatWorkspace = projectId ? (
     <ChatWorkspace
       chatCard={chatCard}
       projectId={projectId}
@@ -1119,6 +1159,21 @@ export function ChatPage() {
     chatCard
   )
 
+  // The chat and its terminal, with the viewer over them when it's open. They
+  // stay mounted underneath (the transcript keeps its place, the terminals
+  // their sessions) but go inert: the viewer is the whole of what's
+  // interactive there, so Esc, typing and focus can't reach the chat behind.
+  const workspace = (
+    <div className="relative flex h-full min-h-0 flex-1 flex-col">
+      <div inert={viewerOpen || undefined} className="flex h-full min-h-0 flex-1 flex-col">
+        {chatWorkspace}
+      </div>
+      {/* No right padding beside the widget column: its own 8px gutter is
+          the gap, and the viewer's on top of it read as a double margin. */}
+      <ViewerLayer diff={diffViewerContext} className={showRightSidebar && !isMobileViewport ? "pr-0" : undefined} />
+    </div>
+  )
+
   const gitWidgetsProps = useMemo<ComponentProps<typeof GitWidgetsContent> | null>(() => {
     if (!projectId) {
       return null
@@ -1128,8 +1183,6 @@ export function ChatPage() {
       projectId,
       diffs: state.chatDiffSnapshot ?? EMPTY_DIFF_SNAPSHOT,
       editorLabel: state.editorLabel,
-      diffRenderMode,
-      wrapLines: wrapDiffLines,
       onOpenFile: handleOpenDiffFile,
       onOpenInFinder: handleOpenDiffInFinder,
       onDiscardFile: handleDiscardDiffFile,
@@ -1137,7 +1190,6 @@ export function ChatPage() {
       onIgnoreFolder: handleIgnoreDiffFolder,
       onCopyFilePath: handleCopyDiffFilePath,
       onCopyRelativePath: handleCopyDiffRelativePath,
-      onLoadPatch: handleLoadDiffPatch,
       onListBranches: handleListBranches,
       onPreviewMergeBranch: handlePreviewMergeBranch,
       onMergeBranch: handleMergeBranch,
@@ -1150,17 +1202,20 @@ export function ChatPage() {
       onSetupGitHub: handleSetupGitHub,
       onCommit: handleCommitDiffs,
       onSyncWithRemote: handleSyncBranch,
-      onDiffRenderModeChange: setDiffRenderMode,
-      onWrapLinesChange: setWrapDiffLines,
+      onReadCommit: handleReadCommit,
+      onReadBranch: handleReadBranch,
+      onLoadPatch: handleLoadDiffPatch,
     }
   }, [
-    diffRenderMode,
     handleCheckGitHubRepoAvailability,
     handleCheckoutBranch,
     handleCommitDiffs,
     handleCopyDiffFilePath,
     handleCopyDiffRelativePath,
     handleCreateBranch,
+    handleReadCommit,
+    handleReadBranch,
+    handleLoadDiffPatch,
     handleDiscardDiffFile,
     handleGenerateCommitMessage,
     handleGetGitHubPublishInfo,
@@ -1168,7 +1223,6 @@ export function ChatPage() {
     handleIgnoreDiffFolder,
     handleInitializeGit,
     handleListBranches,
-    handleLoadDiffPatch,
     handleMergeBranch,
     handleOpenDiffFile,
     handleOpenDiffInFinder,
@@ -1176,11 +1230,8 @@ export function ChatPage() {
     handleSetupGitHub,
     handleSyncBranch,
     projectId,
-    setDiffRenderMode,
-    setWrapDiffLines,
     state.chatDiffSnapshot,
     state.editorLabel,
-    wrapDiffLines,
   ])
   const rightPanelContent = projectId ? (
     <WidgetsSidebar

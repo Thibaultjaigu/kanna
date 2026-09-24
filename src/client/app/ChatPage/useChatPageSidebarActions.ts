@@ -5,6 +5,8 @@ import type {
   ChatBranchListEntry,
   ChatBranchListResult,
   ChatCheckoutBranchResult,
+  ChatCommitDetails,
+  ChatBranchDetails,
   ChatCreateBranchResult,
   ChatMergeBranchResult,
   ChatMergePreviewResult,
@@ -97,6 +99,24 @@ export function useChatPageSidebarActions({
   const handleCopyDiffRelativePath = useCallback((filePath: string) => {
     void state.handleCopyPath(filePath)
   }, [state.handleCopyPath])
+
+  const handleReadBranch = useCallback(async (branch: ChatBranchListEntry) => {
+    if (!projectId) {
+      throw new Error("Project not found")
+    }
+    return await state.socket.command<ChatBranchDetails>({
+      type: "project.readBranch",
+      projectId,
+      branch: serializeBranchSelection(branch),
+    })
+  }, [projectId, state.socket])
+
+  const handleReadCommit = useCallback(async (sha: string) => {
+    if (!projectId) {
+      throw new Error("Project not found")
+    }
+    return await state.socket.command<ChatCommitDetails>({ type: "project.readCommit", projectId, sha })
+  }, [projectId, state.socket])
 
   const handleLoadDiffPatch = useCallback(async (filePath: string) => {
     if (!projectId) {
@@ -661,5 +681,7 @@ export function useChatPageSidebarActions({
     handlePreviewMergeBranch,
     handleMergeBranch,
     handleCreateBranch,
+    handleReadCommit,
+    handleReadBranch,
   }
 }

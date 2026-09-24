@@ -1,6 +1,6 @@
-import { Check, Minus } from "lucide-react"
+import { Check, Minus, X } from "lucide-react"
 import type { ReactNode } from "react"
-import type { ChatDiffSnapshot } from "../../../../shared/types"
+import type { ChatAttachment, ChatCommitChecks, ChatDiffSnapshot } from "../../../../shared/types"
 import { cn } from "../../../lib/utils"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip"
 
@@ -109,3 +109,103 @@ export function DiffFileStat({
     </span>
   )
 }
+
+/**
+ * The letter git would print, in the column's status colors. An untracked
+ * file is a new one as far as a commit is concerned, so it reads "A" too.
+ */
+export function diffStatus(file: DiffFile): { letter: string; label: string; className: string } {
+  if (file.isUntracked || file.changeType === "added") return { letter: "A", label: "Added", className: "text-success" }
+  if (file.changeType === "deleted") return { letter: "D", label: "Deleted", className: "text-destructive" }
+  if (file.changeType === "renamed") return { letter: "R", label: "Renamed", className: "text-info" }
+  return { letter: "M", label: "Modified", className: "text-muted-foreground" }
+}
+
+/** "src/app/Page.tsx" → name "Page.tsx", folder "src/app". */
+export function splitDiffPath(path: string) {
+  const slash = path.lastIndexOf("/")
+  return slash === -1 ? { name: path, folder: "" } : { name: path.slice(slash + 1), folder: path.slice(0, slash) }
+}
+
+/** An image or PDF shows as itself rather than as a binary diff. */
+export function getDiffPreviewAttachment(projectId: string | null, file: DiffFile): ChatAttachment | null {
+  if (!projectId || !file.mimeType || typeof file.size !== "number" || file.changeType === "deleted") {
+    return null
+  }
+
+  if (!file.mimeType.startsWith("image/") && file.mimeType !== "application/pdf") {
+    return null
+  }
+
+  return {
+    id: `diff:${file.path}`,
+    kind: file.mimeType.startsWith("image/") ? "image" : "file",
+    displayName: file.path.split("/").pop() ?? file.path,
+    absolutePath: file.path,
+    relativePath: file.path,
+    contentUrl: `/api/projects/${projectId}/files/${encodeURIComponent(file.path)}/content`,
+    mimeType: file.mimeType,
+    size: file.size,
+  }
+}
+
+/**
+ * A tag or label inside a hover card's small-print row. 16px tall, the row's
+ * own line box (14px leading and a 1px border each side), so a row with a
+ * pill is exactly as tall as one without and the card doesn't shift between
+ * commits.
+ */
+export const CARD_PILL_CLASS = "shrink-0 rounded-full border border-border px-1.5 text-[11px] leading-[14px]"
+
+/**
+ * A check rollup in a hover card: glyph, then "2 of 3 checks passed". The
+ * glyph sits in a fixed 10px box, so the text starts in the same place
+ * whether it follows a check, a cross or the smaller pending dot.
+ */
+export function CheckRollupLabel({ checks }: { checks: ChatCommitChecks }) {
+  return (
+    <>
+      <span className="flex size-2.5 shrink-0 items-center justify-center" aria-hidden>
+        {checks.state === "success"
+          ? <Check className="size-2.5 text-success" strokeWidth={2.5} />
+          : checks.state === "failure"
+            ? <X className="size-2.5 text-destructive" strokeWidth={2.5} />
+            : <span className="size-1.5 rounded-full bg-amber-500" />}
+      </span>
+      <span className="truncate">
+        {checks.state === "pending"
+          ? `Checks running · ${checks.passed} of ${checks.total} finished`
+          : `${checks.passed} of ${checks.total} checks passed`}
+      </span>
+    </>
+  )
+}
+
+/**
+ * Who a hover card is about, leading the card: the one fact a row never has
+ * room for, so it gets the card's first line at full contrast. A GitHub
+ * avatar when there's a login; otherwise the name's initial in a disc, so
+ * every card's first line has the same shape.
+ */
+export function CardPerson({ name, avatarUrl, detail, title }: {
+  name: string
+  avatarUrl?: string
+  /** Muted after the name, e.g. "committed by GitHub". */
+  detail?: string
+  title?: string
+}) {
+  return (
+    <span className="flex min-w-0 items-center gap-1.5" title={title}>
+      {avatarUrl ? (
+        <img src={avatarUrl} alt="" className="size-4 shrink-0 rounded-full bg-muted" />
+      ) : (
+        <span aria-hidden className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-semibold uppercase text-foreground">
+          {name.trim().charAt(0)}
+        </span>
+      )}
+      <span className="truncate text-[13px] font-medium tracking-normal text-popover-foreground">{name}</span>
+      {detail ? <span className="shrink-0 truncate">{detail}</span> : null}
+    </span>
+  )
+}
+

@@ -1,12 +1,15 @@
-import { ArrowUpRight, GitBranchPlus, Plus } from "lucide-react"
+import { GitBranchPlus } from "lucide-react"
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react"
 import type {
+  ChatBranchDetails,
   ChatBranchListEntry,
   ChatBranchListResult,
 } from "../../../../shared/types"
 import { cn } from "../../../lib/utils"
-import { ROW_HIGHLIGHT_CLASS, ROW_HOVER_CLASS } from "../widgets/WidgetCard"
-import { BRANCH_ROW_CLASS, BranchListSection, BranchListSkeleton, BranchSearchRow } from "./BranchList"
+import { ROW_HIGHLIGHT_CLASS, ROW_HOVER_CLASS, WidgetError, WidgetList, WidgetMoreRow, WidgetRow } from "../widgets/parts"
+import { BranchHoverCard, useBranchDetails } from "./BranchHoverCard"
+import { ChecksIcon, pullRequestStateIcon } from "./PullRequestState"
+import { BranchListSection, BranchListSkeleton, BranchSearchRow } from "./BranchList"
 
 /**
  * Unsearched, Local and Remote show only this many, newest commit first: the
@@ -89,34 +92,10 @@ export function branchPickerSections(args: {
   }
 }
 
-/**
- * The last row of a truncated section: "+ N more", in branch-row geometry so
- * its + sits in the icon column. A link opens GitHub in a new tab; otherwise
- * it reveals the rest in place.
- */
-function MoreBranchesRow({ count, href, onClick }: { count: number; href?: string; onClick?: () => void }) {
-  // `group-data-[mode=keyboard]/list`: no hover while the keys drive the list
-  // (see BranchPicker), or a pointer resting here would light a second row.
-  const className = cn(
-    "flex w-full items-center gap-2 rounded-lg border border-transparent px-[3px] py-2 text-left text-sm text-muted-foreground hover:text-foreground",
-    ROW_HOVER_CLASS,
-    "group-data-[mode=keyboard]/list:hover:border-transparent group-data-[mode=keyboard]/list:hover:bg-transparent group-data-[mode=keyboard]/list:hover:text-muted-foreground",
-  )
-  const content = (
-    <>
-      <span className="flex h-5 w-4 shrink-0 items-center justify-center">
-        <Plus className="h-3.5 w-3.5" />
-      </span>
-      <span className="min-w-0 flex-1">{count} more</span>
-      {href ? <ArrowUpRight className="h-3.5 w-3.5 shrink-0" /> : null}
-    </>
-  )
-  return href ? (
-    <a href={href} target="_blank" rel="noreferrer noopener" tabIndex={-1} className={className}>{content}</a>
-  ) : (
-    <button type="button" tabIndex={-1} onClick={onClick} className={className}>{content}</button>
-  )
-}
+/** PRs whose state the picker reads before any hover. */
+const PREFETCHED_PULL_REQUEST_LIMIT = 10
+
+type PickerSection = "recent" | "pullRequests" | "local" | "remote"
 
 type PickerOption =
   | { id: string; kind: "branch"; entry: ChatBranchListEntry }
@@ -138,6 +117,7 @@ export function BranchPicker({
   onCreateBranch,
   onDone,
   repoSlug,
+  onReadBranch,
 }: {
   currentBranchName?: string
   /** "owner/repo" when origin is on GitHub: Remote's and Pull requests' "N more" open their GitHub pages. */
@@ -147,6 +127,8 @@ export function BranchPicker({
   onCreateBranch: (option: BranchCreateOption) => Promise<void>
   /** After a checkout or create, or on Esc: the widget collapses. */
   onDone: () => void
+  /** A branch's tip and standing, or a PR as GitHub has it, for the rows' hover card. */
+  onReadBranch?: (entry: ChatBranchListEntry) => Promise<ChatBranchDetails>
 }) {
   const [isLoading, setIsLoading] = useState(true)
   const [isMutating, setIsMutating] = useState(false)
@@ -154,6 +136,9 @@ export function BranchPicker({
   const [showAllLocal, setShowAllLocal] = useState(false)
   const [showAllRemote, setShowAllRemote] = useState(false)
   const [showAllPullRequests, setShowAllPullRequests] = useState(false)
+  // Folded sections, like the left sidebar's. A search unfolds all of them
+  // (and hides the chevrons): a match nobody can see is worse than none.
+  const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<PickerSection>>(() => new Set())
   const [branchList, setBranchList] = useState<ChatBranchListResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   /*
@@ -200,9 +185,40 @@ export function BranchPicker({
   const createOptions = branchCreateOptions(query, branchList, currentName)
   const optionIdFor = (entry: ChatBranchListEntry) => `${listId}-${entry.id}`
 
-  // Every row the keys can reach, top to bottom.
+  // The PRs on screen read their state up front, for the icons under each
+  // one's age. At most ten: each is a network read, and a search can show 50.
+  const pullRequestDetails = useBranchDetails(sections.pullRequests.slice(0, PREFETCHED_PULL_REQUEST_LIMIT), onReadBranch)
+  const pullRequestChecks = (entry: ChatBranchListEntry) => {
+    const checks = pullRequestDetails.get(entry.id)?.pullRequest?.checks
+    return checks ? <ChecksIcon checks={checks} /> : undefined
+  }
+  // The main icon says whether it can merge, once that's been read.
+  const pullRequestIcon = (entry: ChatBranchListEntry) => {
+    const pr = pullRequestDetails.get(entry.id)?.pullRequest
+    if (!pr) return undefined
+    const { icon, label } = pullRequestStateIcon(pr)
+    return <span title={label} aria-label={label} className="flex">{icon}</span>
+  }
+  const shownEntries = new Map(
+    [...sections.recent, ...sections.pullRequests, ...sections.local, ...sections.remote].map((entry) => [entry.id, entry]),
+  )
+  const searching = query.trim().length > 0
+  const isExpanded = (section: PickerSection) => searching || !collapsedSections.has(section)
+  const sectionFold = (section: PickerSection) => ({
+    expanded: isExpanded(section),
+    onToggle: searching ? undefined : () => setCollapsedSections((current) => {
+      const next = new Set(current)
+      if (next.has(section)) next.delete(section)
+      else next.add(section)
+      return next
+    }),
+  })
+
+  // Every row the keys can reach, top to bottom. A folded section's rows
+  // aren't on screen, so the keys skip them.
   const options: PickerOption[] = [
-    ...[...sections.recent, ...sections.pullRequests, ...sections.local, ...sections.remote]
+    ...(["recent", "pullRequests", "local", "remote"] as const)
+      .flatMap((section) => (isExpanded(section) ? sections[section] : []))
       .map((entry): PickerOption => ({ id: optionIdFor(entry), kind: "branch", entry })),
     ...createOptions.map((option): PickerOption => ({ id: `${listId}-create-${option.baseBranchName ?? ""}`, kind: "create", option })),
   ]
@@ -239,7 +255,8 @@ export function BranchPicker({
    * pointer isn't over the list, so there is never more than one lit row.
    */
   function optionClassName(isActive: boolean) {
-    if (mode === "keyboard") return isActive ? ROW_HIGHLIGHT_CLASS : undefined
+    // "" rather than undefined: a row given no highlight falls back to hover.
+    if (mode === "keyboard") return isActive ? ROW_HIGHLIGHT_CLASS : ""
     return isActive
       ? cn(ROW_HIGHLIGHT_CLASS, "group-hover/list:border-transparent group-hover/list:bg-transparent hover:!border-border hover:!bg-muted")
       : ROW_HOVER_CLASS
@@ -279,8 +296,31 @@ export function BranchPicker({
     }
   }
 
+  // Every header counts its section, what a search matched while searching.
+  // The count is what says a section holds more than its first few rows.
+  const countOf = (total: number) => (total > 0 ? total : undefined)
+  // Rows a "Show more" added fade in; a search's results just appear.
+  const revealFrom = (showAll: boolean) => (showAll && !searching ? UNSEARCHED_BRANCH_LIMIT : undefined)
+  // A section's end, when it shows only its newest few: the rest in place,
+  // or on GitHub where the list lives there. Nothing while searching, which
+  // shows every match. Out of the tab order and quiet while the keys drive,
+  // like everything else in a combobox's list.
+  const sectionMore = (total: number, showAll: boolean, setShowAll: (showAll: boolean) => void, githubHref?: string) => {
+    if (searching || total <= UNSEARCHED_BRANCH_LIMIT) return null
+    return githubHref ? (
+      <WidgetMoreRow count={total - UNSEARCHED_BRANCH_LIMIT} total={total} href={githubHref} tabIndex={-1} suppressHover={mode === "keyboard"} />
+    ) : (
+      <WidgetMoreRow
+        count={total - UNSEARCHED_BRANCH_LIMIT}
+        shown={showAll}
+        onShow={() => setShowAll(true)}
+        onHide={() => setShowAll(false)}
+        tabIndex={-1}
+        suppressHover={mode === "keyboard"}
+      />
+    )
+  }
   const sectionProps = {
-    rowClassName: "px-[3px]",
     disabled: isMutating,
     activeOptionId: resolvedActiveId,
     optionId: optionIdFor,
@@ -300,8 +340,8 @@ export function BranchPicker({
         activeOptionId={resolvedActiveId ?? undefined}
         onKeyDown={handleKeyDown}
       />
-      <div
-        ref={listRef}
+      <WidgetList
+        listRef={listRef}
         id={listId}
         role="listbox"
         aria-label="Branches"
@@ -312,100 +352,87 @@ export function BranchPicker({
           setMode("pointer")
           setKeyboardActiveId(null)
         }}
-        // No space between sections either: the last row of one and the
-        // create rows below it would otherwise have dead space between them.
-        className="group/list px-2 pb-2"
+        className="group/list"
       >
         {isLoading ? (
-          <BranchListSkeleton rowClassName="px-[3px]" />
+          <BranchListSkeleton />
         ) : error ? (
-          <div className="rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground">{error}</div>
+          <WidgetError>{error}</WidgetError>
         ) : (
           <>
             {!hasBranchRows && createOptions.length === 0 ? (
-              <div className="px-1 pb-1 pt-2 text-xs text-muted-foreground">
+              <div className="px-1.5 py-1 text-xs text-muted-foreground">
                 {query.trim() ? "No matching branches." : "No other branches."}
               </div>
             ) : null}
-            <BranchListSection title="Recent" entries={sections.recent} {...sectionProps} />
+            <BranchListSection title="Recent" count={countOf(sections.recent.length)} entries={sections.recent} {...sectionFold("recent")} {...sectionProps} />
             <BranchListSection
               title="Pull requests"
-              count={branchList?.pullRequests.length}
+              {...sectionFold("pullRequests")}
+              count={countOf(sections.allPullRequestCount)}
               entries={sections.pullRequests}
+              subMetaFor={pullRequestChecks}
+              iconFor={pullRequestIcon}
               // Said only when PRs could not be read. "None open" is the
               // section being absent, like every other empty section.
-              emptyLabel={branchList?.pullRequestsStatus === "error" && !query.trim()
+              emptyLabel={branchList?.pullRequestsStatus === "error" && !searching
                 ? branchList.pullRequestsError ?? "Could not load pull requests."
                 : undefined}
-              footer={sections.allPullRequestCount > sections.pullRequests.length ? (
-                repoSlug ? (
-                  <MoreBranchesRow
-                    count={sections.allPullRequestCount - sections.pullRequests.length}
-                    href={`https://github.com/${repoSlug}/pulls`}
-                  />
-                ) : (
-                  <MoreBranchesRow count={sections.allPullRequestCount - sections.pullRequests.length} onClick={() => setShowAllPullRequests(true)} />
-                )
-              ) : null}
+              revealFrom={revealFrom(showAllPullRequests)}
+              footer={sectionMore(sections.allPullRequestCount, showAllPullRequests, setShowAllPullRequests, repoSlug ? `https://github.com/${repoSlug}/pulls` : undefined)}
               {...sectionProps}
             />
             <BranchListSection
               title="Local"
+              {...sectionFold("local")}
+              count={countOf(sections.allLocalCount)}
               entries={sections.local}
-              footer={sections.allLocalCount > sections.local.length ? (
-                // Local branches have no page on GitHub, so the rest open here.
-                <MoreBranchesRow count={sections.allLocalCount - sections.local.length} onClick={() => setShowAllLocal(true)} />
-              ) : null}
+              revealFrom={revealFrom(showAllLocal)}
+              // Local branches have no page on GitHub, so the rest open here.
+              footer={sectionMore(sections.allLocalCount, showAllLocal, setShowAllLocal)}
               {...sectionProps}
             />
             <BranchListSection
               title="Remote"
+              {...sectionFold("remote")}
+              count={countOf(sections.allRemoteCount)}
               entries={sections.remote}
-              footer={sections.allRemoteCount > sections.remote.length ? (
-                repoSlug ? (
-                  <MoreBranchesRow
-                    count={sections.allRemoteCount - sections.remote.length}
-                    href={`https://github.com/${repoSlug}/branches/all`}
-                  />
-                ) : (
-                  <MoreBranchesRow count={sections.allRemoteCount - sections.remote.length} onClick={() => setShowAllRemote(true)} />
-                )
-              ) : null}
+              revealFrom={revealFrom(showAllRemote)}
+              footer={sectionMore(sections.allRemoteCount, showAllRemote, setShowAllRemote, repoSlug ? `https://github.com/${repoSlug}/branches/all` : undefined)}
               {...sectionProps}
             />
             {createOptions.length > 0 ? (
-              <div role="group" aria-label="Create branch" className={hasBranchRows ? undefined : "pt-2"}>
+              // Directly under the last section's rows, touching them.
+              <div role="group" aria-label="Create branch" className="flex flex-col gap-px">
                 {createOptions.map((option) => {
                   const id = `${listId}-create-${option.baseBranchName ?? ""}`
                   const isActive = id === resolvedActiveId
                   return (
-                    <button
+                    <WidgetRow
                       key={id}
                       id={id}
-                      type="button"
                       role="option"
                       aria-selected={isActive}
                       tabIndex={-1}
-                      data-active={isActive}
+                      icon={<GitBranchPlus />}
+                      title={(
+                        <>
+                          Create <span className="font-mono text-[13px]">{option.name}</span>
+                          {option.baseBranchName ? <span className="text-muted-foreground"> from {option.baseBranchName}</span> : null}
+                        </>
+                      )}
                       disabled={isMutating}
-                      onClick={() => choose({ id, kind: "create", option })}
-                      className={cn(BRANCH_ROW_CLASS, "px-[3px] disabled:opacity-60", optionClassName(isActive))}
-                    >
-                      <span className="flex h-5 w-4 shrink-0 items-center justify-center">
-                        <GitBranchPlus className="h-3.5 w-3.5 text-muted-foreground" />
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                        Create <span className="font-mono text-[13px]">{option.name}</span>
-                        {option.baseBranchName ? <span className="text-muted-foreground"> from {option.baseBranchName}</span> : null}
-                      </span>
-                    </button>
+                      highlightClassName={optionClassName(isActive)}
+                      onActivate={() => choose({ id, kind: "create", option })}
+                    />
                   )
                 })}
               </div>
             ) : null}
           </>
         )}
-      </div>
+      </WidgetList>
+      <BranchHoverCard containerRef={listRef} entries={shownEntries} onReadBranch={onReadBranch} repoSlug={repoSlug} />
     </>
   )
 }

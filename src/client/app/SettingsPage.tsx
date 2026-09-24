@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   Code,
   Info,
-  Loader2,
   LogOut,
 } from "lucide-react"
 import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom"
@@ -20,7 +19,7 @@ import { ProvidersSection } from "./settings/ProvidersSection"
 import { SETTINGS_SECTIONS } from "./settings/registry"
 import { SkillsSection } from "./settings/SkillsSection"
 import { UsageSection } from "./settings/UsageSection"
-import { getKeybindingsSubtitle } from "./settings/shared"
+import { getKeybindingsSubtitle, SETTINGS_INSET_X_CLASS, SettingsNotice, SettingsPlaceholder } from "./settings/shared"
 import type { KannaState } from "./useKannaState"
 
 // Sections live under ./settings/; these re-exports keep the historical
@@ -177,7 +176,7 @@ export function SettingsPage() {
             </div>
             {sidebarItems.map((item) => (
               <button
-                key={item.label}
+                key={item.id}
                 type="button"
                 onClick={() => navigate(`/settings/${item.id}`)}
                 className={`cursor-pointer rounded-lg px-3 py-2 text-sm ${
@@ -227,7 +226,7 @@ export function SettingsPage() {
                 </div>
                 {sidebarItems.map((item) => (
                   <button
-                    key={item.label}
+                    key={item.id}
                     type="button"
                     onClick={() => navigate(`/settings/${item.id}`)}
                     className={cn(
@@ -264,27 +263,14 @@ export function SettingsPage() {
 
           <div className="w-full px-4 pb-32 pt-8 md:px-6 md:pt-16">
             {isConnecting ? (
-              <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-border bg-card/40 px-4 py-6 text-sm text-muted-foreground">
-                <div className="flex items-center gap-3">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Loading machine settings…</span>
-                </div>
-              </div>
+              <SettingsPlaceholder loading className="mx-auto max-w-4xl">Loading machine settings…</SettingsPlaceholder>
             ) : (
-              <div className="mx-auto max-w-4xl">
-                <div className="pb-6">
+              <div className="@container mx-auto max-w-4xl">
+                <div className={cn("pb-8", SETTINGS_INSET_X_CLASS)}>
                   <div className="flex items-center justify-between gap-4 min-h-[34px]">
                     <div className="text-lg font-semibold tracking-[-0.2px] text-foreground">
                       {selectedSection.label}
                     </div>
-                    {selectedPage === "general" ? (
-                      <SettingsHeaderButton
-                        variant="outline"
-                        onClick={() => navigate("/settings/changelog")}
-                      >
-                        Check for updates
-                      </SettingsHeaderButton>
-                    ) : null}
                     {selectedPage === "keybindings" ? (
                       <SettingsHeaderButton
                         onClick={() => {
@@ -333,10 +319,10 @@ export function SettingsPage() {
             )}
 
             {state.commandError ? (
-              <div className="mx-auto mt-4 flex max-w-4xl items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              <SettingsNotice className="mx-auto mt-6 flex max-w-4xl items-start gap-3">
                 <Info className="mt-0.5 h-4 w-4 flex-shrink-0" />
                 <span>{state.commandError}</span>
-              </div>
+              </SettingsNotice>
             ) : null}
           </div>
 

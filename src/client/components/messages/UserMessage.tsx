@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react"
+import { useMemo } from "react"
 import type { ChatAttachment } from "../../../shared/types"
 import { CornerUpLeft } from "lucide-react"
 import { TranscriptMarkdown } from "./shared"
 import { classifyAttachmentPreview } from "./attachmentPreview"
 import { AttachmentFileCard, AttachmentImageCard } from "./AttachmentCard"
-import { AttachmentPreviewModal } from "./AttachmentPreviewModal"
+import { openViewer, viewerAttachmentFromChat } from "../../stores/viewerStore"
 import { useTranscriptRenderOptions } from "./render-context"
 import { cn } from "../../lib/utils"
 
@@ -42,7 +42,6 @@ function parseSystemMessage(content: string) {
 }
 
 export function UserMessage({ content, attachments = [], steered = false, flash = false }: Props) {
-  const [selectedAttachmentId, setSelectedAttachmentId] = useState<string | null>(null)
   const renderOptions = useTranscriptRenderOptions()
   const parsedContent = useMemo(() => parseSystemMessage(content), [content])
   const shouldShowImagePlaceholders = renderOptions.attachmentMode === "metadata"
@@ -55,7 +54,6 @@ export function UserMessage({ content, attachments = [], steered = false, flash 
     () => attachments.filter((attachment) => attachment.kind !== "image" || (!attachment.contentUrl && !shouldShowImagePlaceholders)),
     [attachments, shouldShowImagePlaceholders],
   )
-  const selectedAttachment = attachments.find((attachment) => attachment.id === selectedAttachmentId) ?? null
 
   function handleAttachmentClick(attachment: ChatAttachment) {
     if (!canInteractWithAttachments || !attachment.contentUrl) {
@@ -70,7 +68,7 @@ export function UserMessage({ content, attachments = [], steered = false, flash 
       return
     }
 
-    setSelectedAttachmentId(attachment.id)
+    openViewer({ kind: "attachment", attachment: viewerAttachmentFromChat(attachment) })
   }
 
   return (
@@ -123,7 +121,6 @@ export function UserMessage({ content, attachments = [], steered = false, flash 
           </div>
         ) : null}
       </div>
-      <AttachmentPreviewModal attachment={selectedAttachment} onOpenChange={(open) => !open && setSelectedAttachmentId(null)} />
     </>
   )
 }

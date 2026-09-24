@@ -23,6 +23,7 @@ export function SettingsHeaderButton({
       className={cn(
         buttonVariants({ variant, size: "sm" }),
         "h-auto gap-1.5 px-3 py-1.5",
+        "transition-[background-color,color,border-color,transform] duration-150 ease-out active:scale-[0.97]",
         className
       )}
       {...props}

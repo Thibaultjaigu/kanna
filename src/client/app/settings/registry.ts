@@ -1,4 +1,4 @@
-import { BookText, Command, FlaskConical, Gauge, MessageSquareQuote, Settings2, type LucideIcon } from "lucide-react"
+import { BookText, Command, FlaskConical, Gauge, MessageSquareQuote, ScrollText, Settings2, type LucideIcon } from "lucide-react"
 
 /**
  * Single source of truth for settings navigation targets.
@@ -15,19 +15,19 @@ export const SETTINGS_SECTIONS = [
     id: "general",
     label: "General",
     icon: Settings2 as LucideIcon,
-    subtitle: "Manage appearance, editor behavior, and embedded terminal defaults.",
-  },
-  {
-    id: "skills",
-    label: "Skills",
-    icon: BookText as LucideIcon,
-    subtitle: "Manage globally installed agent skills from the active skill lock file.",
+    subtitle: "Appearance, notifications, chats, editor, and terminal.",
   },
   {
     id: "providers",
     label: "Providers",
     icon: MessageSquareQuote as LucideIcon,
-    subtitle: "Manage the default chat provider and saved model defaults for Claude Code, Codex, Cursor, Grok Build, and Pi.",
+    subtitle: "Sign-ins, the default provider, and model defaults for each harness.",
+  },
+  {
+    id: "skills",
+    label: "Skills",
+    icon: BookText as LucideIcon,
+    subtitle: "Global agent skills from the active skill lock file.",
   },
   {
     id: "keybindings",
@@ -39,7 +39,7 @@ export const SETTINGS_SECTIONS = [
     id: "usage",
     label: "Usage",
     icon: Gauge as LucideIcon,
-    subtitle: "Subscription rate-limit utilization for each harness, with reset times and when each figure was recorded.",
+    subtitle: "Subscription rate limits for each harness, with reset times.",
   },
   {
     id: "labs",
@@ -51,8 +51,8 @@ export const SETTINGS_SECTIONS = [
   {
     id: "changelog",
     label: "Changelog",
-    icon: BookText as LucideIcon,
-    subtitle: "Release notes pulled from the public GitHub releases feed.",
+    icon: ScrollText as LucideIcon,
+    subtitle: "Release notes from the public GitHub releases feed.",
   },
 ] as const
 
@@ -84,64 +84,64 @@ export const SETTINGS_ROWS = defineRows({
     sectionId: "general",
     title: "Application Update",
     description: "Current version and update status.",
-    keywords: ["version", "upgrade", "latest"],
+    keywords: ["version", "upgrade", "latest", "check for updates"],
   },
   theme: {
     sectionId: "general",
     title: "Theme",
-    description: "Choose between light, dark, or system appearance",
+    description: "Light, dark, or match the system appearance.",
     keywords: ["appearance", "dark mode", "light mode"],
   },
   chatSounds: {
     sectionId: "general",
     title: "Chat Sounds",
-    description: "Play a pop when a chat starts waiting on you or the unread chat count increases",
+    description: "Play a sound when a chat starts waiting on you or the unread count goes up.",
     keywords: ["notifications", "audio", "mute"],
   },
   chatSound: {
     sectionId: "general",
-    title: "Chat Sound",
-    description: "The bundled sound used for chat notification playback and previews",
-    keywords: ["notifications", "audio"],
+    title: "Sound Effect",
+    description: "The sound chat notifications play. Picking one plays a preview.",
+    keywords: ["notifications", "audio", "chat sound"],
   },
   chatBrowserNotifications: {
     sectionId: "general",
-    title: "Chat Notifications",
-    description: "Show a system notification when a chat starts waiting on you or turns unread",
-    keywords: ["notifications", "browser", "desktop", "system", "popup", "permission"],
+    title: "System Notifications",
+    description: "Show a system notification when a chat starts waiting on you or turns unread.",
+    keywords: ["notifications", "browser", "desktop", "system", "popup", "permission", "chat notifications"],
   },
   submitWhileRunning: {
     sectionId: "general",
     title: "Enter While Running",
-    description: "What Enter does while an agent is working. ⌘Enter always does the other one",
+    description: "What Enter does while an agent is working. ⌘Enter always does the other one.",
     keywords: ["queue", "steer", "interrupt", "enter", "send", "composer"],
   },
   defaultEditor: {
     sectionId: "general",
     title: "Default Editor",
-    description: "Used when opening transcript links or files from the git diff menu",
+    description: "Opens transcript links and files from the git diff menu.",
     keywords: ["cursor", "xcode", "windsurf", "vscode", "command template"],
   },
   newProjectsDirectory: {
     sectionId: "general",
     title: "New Projects Directory",
-    description: "Where cloned and newly created projects are placed",
+    description: "Where cloned and newly created projects go.",
     keywords: ["clone", "create", "folder", "destination", "add project", "path"],
   },
   terminalScrollback: {
     sectionId: "general",
     title: "Terminal Scrollback",
-    description: "Lines retained for embedded terminal history",
+    description: "Lines of history each embedded terminal keeps.",
   },
   terminalMinColumnWidth: {
     sectionId: "general",
     title: "Terminal Min Column Width",
-    description: "Minimum width for each terminal pane",
+    description: "Minimum width of each terminal pane.",
   },
   transcriptWindow: {
     sectionId: "general",
     title: "Transcript Window",
-    description: "Assistant messages a chat opens with, and how many each \"load earlier\" adds",
+    description: "Assistant messages a chat opens with, and how many each \"load earlier\" adds.",
     keywords: ["chat", "history", "load earlier", "messages", "performance", "window"],
   },
   anonymousAnalytics: {
@@ -155,31 +155,37 @@ export const SETTINGS_ROWS = defineRows({
   defaultProvider: {
     sectionId: "providers",
     title: "Default Provider",
-    description: "The default harness used for new chats before a provider is locked by an existing session.",
+    description: "The harness new chats start with. A chat keeps its provider once a session exists.",
     keywords: ["harness", "agent"],
   },
   claudeDefaults: {
     sectionId: "providers",
     title: "Claude Code Defaults",
-    description: "Saved defaults when using Claude Code.",
+    description: "Defaults for new Claude Code chats.",
     keywords: ["anthropic", "model"],
   },
   codexDefaults: {
     sectionId: "providers",
     title: "Codex Defaults",
-    description: "Saved defaults when using Codex.",
+    description: "Defaults for new Codex chats.",
     keywords: ["openai", "model"],
   },
   cursorDefaults: {
     sectionId: "providers",
     title: "Cursor Defaults",
-    description: "Saved defaults when using Cursor.",
+    description: "Defaults for new Cursor chats.",
     keywords: ["model"],
+  },
+  grokDefaults: {
+    sectionId: "providers",
+    title: "Grok Build Defaults",
+    description: "Defaults for new Grok Build chats.",
+    keywords: ["grok", "xai", "model"],
   },
   piDefaults: {
     sectionId: "providers",
     title: "Pi Defaults",
-    description: "Saved defaults when using Pi (connects through the Model Registry).",
+    description: "Defaults for new Pi chats. Pi connects through the Model Registry.",
     keywords: ["model"],
   },
   modelRegistry: {
@@ -204,13 +210,13 @@ export const SETTINGS_ROWS = defineRows({
   },
   terminalWebglRenderer: {
     sectionId: "labs",
-    title: "Terminal GPU rendering",
+    title: "Terminal GPU Rendering",
     description: "Draw the embedded terminal with xterm's WebGL renderer instead of the DOM one. Faster with heavy output; falls back to the DOM renderer if the GPU context is unavailable or lost. Reopens open terminals.",
     keywords: ["terminal", "webgl", "gpu", "renderer", "performance", "acceleration", "experimental"],
   },
   nightlyBuilds: {
     sectionId: "labs",
-    title: "Nightly builds",
+    title: "Nightly Builds",
     description: "Run the newest changes from main — downloaded from GitHub and built from source on this machine.",
     keywords: ["nightly", "main", "update", "channel", "stable", "prerelease", "build"],
   },

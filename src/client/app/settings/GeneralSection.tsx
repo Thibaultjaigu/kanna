@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
-import { Monitor, Moon, Sun } from "lucide-react"
+import { DownloadCloud, Monitor, Moon, Sun } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { ANALYTICS_STATIC_EVENT_NAMES, ANALYTICS_STATIC_PROPERTY_NAMES } from "../../../shared/analytics"
 import type { EditorPreset } from "../../../shared/protocol"
 import { DEFAULT_NEW_PROJECTS_DIRECTORY, isNightlyVersion, type SubmitWhileRunning } from "../../../shared/types"
@@ -9,6 +10,8 @@ import { Button } from "../../components/ui/button"
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogTitle } from "../../components/ui/dialog"
 import { Input } from "../../components/ui/input"
 import { SegmentedControl } from "../../components/ui/segmented-control"
+import { SettingsHeaderButton } from "../../components/ui/settings-header-button"
+import { Switch } from "../../components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -18,6 +21,7 @@ import {
   SelectValue,
 } from "../../components/ui/select"
 import { useTheme, type ThemePreference } from "../../hooks/useTheme"
+import { cn } from "../../lib/utils"
 import { playChatNotificationSound } from "../../lib/chatSounds"
 import {
   DEFAULT_TERMINAL_MIN_COLUMN_WIDTH,
@@ -44,10 +48,15 @@ import {
 } from "../../../shared/transcript-window"
 import type { KannaState } from "../useKannaState"
 import {
-  ENABLED_DISABLED_OPTIONS,
   handleSettingsInputKeyDown,
   resolveChatBrowserNotificationPreferenceAfterPermission,
+  SETTINGS_CONTROL_CLASS,
+  SETTINGS_INLINE_ACTION_CLASS,
+  SETTINGS_NUMBER_INPUT_CLASS,
   SettingsErrorBanner,
+  SettingsField,
+  SettingsGroup,
+  SettingsGroups,
   SettingsRow,
   shouldPreviewChatSoundChange,
 } from "./shared"
@@ -75,9 +84,13 @@ export function GeneralSection({
   state,
   appVersion,
 }: {
-  state: Pick<KannaState, "updateSnapshot" | "appSettings" | "handleWriteAppSettings">
+  state: Pick<
+    KannaState,
+    "updateSnapshot" | "appSettings" | "handleWriteAppSettings" | "handleCheckForUpdates" | "handleInstallUpdate"
+  >
   appVersion: string
 }) {
+  const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
   const appSettings = state.appSettings
   const updateSnapshot = state.updateSnapshot
@@ -266,10 +279,10 @@ export function GeneralSection({
     })()
   }
 
-  async function handleAnalyticsPreferenceChange(nextValue: "enabled" | "disabled") {
+  async function handleAnalyticsPreferenceChange(enabled: boolean) {
     try {
       setAppSettingsError(null)
-      await handleWriteAppSettings({ analyticsEnabled: nextValue === "enabled" })
+      await handleWriteAppSettings({ analyticsEnabled: enabled })
     } catch (error) {
       setAppSettingsError(error instanceof Error ? error.message : "Unable to save analytics settings.")
     }
@@ -279,301 +292,327 @@ export function GeneralSection({
     .replaceAll("{path}", "/Users/jake/Projects/kanna/src/client/app/App.tsx")
     .replaceAll("{line}", "12")
     .replaceAll("{column}", "1")
-  const analyticsSettingValue = appSettings?.analyticsEnabled === false ? "disabled" : "enabled"
+  const analyticsEnabled = appSettings?.analyticsEnabled !== false
+
+  const isCheckingForUpdate = updateSnapshot?.status === "checking"
+  const isInstallingUpdate = updateSnapshot?.status === "updating" || updateSnapshot?.status === "restart_pending"
+  const currentVersionLabel = updateSnapshot?.currentVersion ?? appVersion
 
   return (
     <>
       {appSettingsError ? <SettingsErrorBanner message={appSettingsError} /> : null}
-      <div className="border-b border-border">
-        <SettingsRow
-          def={SETTINGS_ROWS.applicationUpdate}
-          description={(
-            <>
-              <span>{updateStatusLabel}.</span>
-              {updateSnapshot?.lastCheckedAt ? (
-                <span> Last checked {new Intl.DateTimeFormat(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                }).format(updateSnapshot.lastCheckedAt)}.</span>
-              ) : null}
-              {updateSnapshot?.error ? (
-                <span> {updateSnapshot.error}</span>
-              ) : null}
-            </>
-          )}
-          bordered={false}
-        >
-          <div className="text-right text-sm text-foreground">
-            <div>Current: {updateSnapshot?.currentVersion ?? appVersion}</div>
-            <div className="text-xs text-muted-foreground">
-              Latest: {updateSnapshot?.latestVersion ?? "Unknown"}
-            </div>
-          </div>
-        </SettingsRow>
-
-        <SettingsRow def={SETTINGS_ROWS.theme}>
-          <SegmentedControl
-            value={theme}
-            onValueChange={handleThemeChange}
-            options={themeOptions}
-            size="sm"
-          />
-        </SettingsRow>
-
-        <SettingsRow def={SETTINGS_ROWS.chatSounds}>
-          <Select
-            value={chatSoundPreference}
-            onValueChange={(value) => handleChatSoundPreferenceChange(value as ChatSoundPreference)}
+      <SettingsGroups>
+        <SettingsGroup>
+          <SettingsRow
+            def={SETTINGS_ROWS.applicationUpdate}
+            description={(
+              <>
+                <span>Kanna {currentVersionLabel}. {updateStatusLabel}.</span>
+                {updateSnapshot?.lastCheckedAt ? (
+                  <span> Last checked {new Intl.DateTimeFormat(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  }).format(updateSnapshot.lastCheckedAt)}.</span>
+                ) : null}
+                {updateSnapshot?.error ? (
+                  <span> {updateSnapshot.error}</span>
+                ) : null}
+                {" "}
+                <button
+                  type="button"
+                  onClick={() => navigate("/settings/changelog")}
+                  className={SETTINGS_INLINE_ACTION_CLASS}
+                >
+                  Changelog
+                </button>
+              </>
+            )}
           >
-            <SelectTrigger className="min-w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {chatSoundPreferenceOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </SettingsRow>
+            {updateSnapshot?.updateAvailable ? (
+              <SettingsHeaderButton
+                variant="default"
+                onClick={() => { void state.handleInstallUpdate() }}
+                disabled={isInstallingUpdate}
+                icon={<DownloadCloud className="h-4 w-4" />}
+              >
+                {isInstallingUpdate ? "Updating…" : `Update to ${updateSnapshot.latestVersion ?? "latest"}`}
+              </SettingsHeaderButton>
+            ) : (
+              <SettingsHeaderButton
+                onClick={() => { void state.handleCheckForUpdates({ force: true }) }}
+                disabled={isCheckingForUpdate || isInstallingUpdate}
+              >
+                {isCheckingForUpdate ? "Checking…" : "Check for updates"}
+              </SettingsHeaderButton>
+            )}
+          </SettingsRow>
+        </SettingsGroup>
 
-        <SettingsRow def={SETTINGS_ROWS.chatSound}>
-          <Select
-            value={chatSoundId}
-            onValueChange={(value) => handleChatSoundIdChange(value as ChatSoundId)}
-          >
-            <SelectTrigger className="min-w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {CHAT_SOUND_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </SettingsRow>
+        <SettingsGroup title="Appearance">
+          <SettingsRow def={SETTINGS_ROWS.theme}>
+            <SegmentedControl
+              value={theme}
+              onValueChange={handleThemeChange}
+              options={themeOptions}
+              size="sm"
+            />
+          </SettingsRow>
+        </SettingsGroup>
 
-        <SettingsRow def={SETTINGS_ROWS.chatBrowserNotifications}>
-          <Select
-            value={chatBrowserNotificationPreference}
-            onValueChange={(value) => handleChatBrowserNotificationPreferenceChange(value as ChatBrowserNotificationPreference)}
-          >
-            <SelectTrigger className="min-w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {chatBrowserNotificationPreferenceOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </SettingsRow>
-
-        <SettingsRow def={SETTINGS_ROWS.submitWhileRunning}>
-          <Select
-            value={submitWhileRunning}
-            onValueChange={(value) => {
-              void handleWriteAppSettings({ submitWhileRunning: value as SubmitWhileRunning }).catch((error) => {
-                setAppSettingsError(error instanceof Error ? error.message : "Unable to save composer settings.")
-              })
-            }}
-          >
-            <SelectTrigger className="min-w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="queue">Queue message</SelectItem>
-                <SelectItem value="steer">Steer now</SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </SettingsRow>
-
-        <SettingsRow def={SETTINGS_ROWS.defaultEditor} alignStart>
-          <Select
-            value={editorPreset}
-            onValueChange={(value) => handleEditorPresetChange(value as EditorPreset)}
-          >
-            <SelectTrigger className="min-w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {EDITOR_OPTIONS.map((option) => {
-                  // Listed but not selectable when it isn't on this machine —
-                  // picking it would only make every "Open in" fail later.
-                  const installed = !installedEditors || option.value === "custom" || installedEditors.includes(option.value)
-                  return (
-                    <SelectItem key={option.value} value={option.value} disabled={!installed}>
-                      <span className="flex items-center gap-2">
-                        <EditorIcon preset={option.value} className={`h-4 w-4 shrink-0${installed ? "" : " opacity-40 grayscale"}`} />
-                        <span className={installed ? undefined : "text-muted-foreground"}>{option.label}</span>
-                        {installed ? null : (
-                          <span className="ml-auto shrink-0 rounded-full border border-border/70 px-1.5 py-px text-[10px] leading-4 font-medium text-muted-foreground">
-                            Not installed
-                          </span>
-                        )}
-                      </span>
+        <SettingsGroup title="Notifications">
+          <SettingsRow def={SETTINGS_ROWS.chatSounds}>
+            <Select
+              value={chatSoundPreference}
+              onValueChange={(value) => handleChatSoundPreferenceChange(value as ChatSoundPreference)}
+            >
+              <SelectTrigger className={SETTINGS_CONTROL_CLASS}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {chatSoundPreferenceOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
                     </SelectItem>
-                  )
-                })}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </SettingsRow>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </SettingsRow>
 
-        {editorPreset === "custom" ? (
-          <div className="border-t border-border">
-            <div className="flex justify-between gap-8 py-5 pl-6">
-              <div className="min-w-0 max-w-xl">
-                <div className="text-sm font-medium text-foreground">Command Template</div>
-                <div className="mt-1 text-[13px] text-muted-foreground">
-                  Include {"{path}"} and optionally {"{line}"} and {"{column}"} in your command.
-                </div>
-              </div>
-              <div className="flex min-w-0 max-w-[420px] flex-1 flex-col items-stretch gap-2">
+          <SettingsRow def={SETTINGS_ROWS.chatSound}>
+            {/* Which sound only matters while sounds can play at all. */}
+            <Select
+              value={chatSoundId}
+              onValueChange={(value) => handleChatSoundIdChange(value as ChatSoundId)}
+              disabled={chatSoundPreference === "never"}
+            >
+              <SelectTrigger className={SETTINGS_CONTROL_CLASS}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {CHAT_SOUND_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </SettingsRow>
+
+          <SettingsRow def={SETTINGS_ROWS.chatBrowserNotifications}>
+            <Select
+              value={chatBrowserNotificationPreference}
+              onValueChange={(value) => handleChatBrowserNotificationPreferenceChange(value as ChatBrowserNotificationPreference)}
+            >
+              <SelectTrigger className={SETTINGS_CONTROL_CLASS}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {chatBrowserNotificationPreferenceOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </SettingsRow>
+        </SettingsGroup>
+
+        <SettingsGroup title="Chats">
+          <SettingsRow def={SETTINGS_ROWS.submitWhileRunning}>
+            <Select
+              value={submitWhileRunning}
+              onValueChange={(value) => {
+                void handleWriteAppSettings({ submitWhileRunning: value as SubmitWhileRunning }).catch((error) => {
+                  setAppSettingsError(error instanceof Error ? error.message : "Unable to save composer settings.")
+                })
+              }}
+            >
+              <SelectTrigger className={SETTINGS_CONTROL_CLASS}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="queue">Queue message</SelectItem>
+                  <SelectItem value="steer">Steer now</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </SettingsRow>
+
+          <SettingsRow def={SETTINGS_ROWS.transcriptWindow}>
+            <SettingsField
+              hint={`${MIN_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES}–${MAX_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES} messages${transcriptWindow === DEFAULT_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES ? " (default)" : ""}`}
+            >
+              <Input
+                type="number"
+                min={MIN_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES}
+                max={MAX_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES}
+                step={5}
+                value={transcriptWindowDraft}
+                onChange={(event) => setTranscriptWindowDraft(event.target.value)}
+                onBlur={commitTranscriptWindow}
+                onKeyDown={(event) => handleSettingsInputKeyDown(event, commitTranscriptWindow)}
+                className={SETTINGS_NUMBER_INPUT_CLASS}
+              />
+            </SettingsField>
+          </SettingsRow>
+        </SettingsGroup>
+
+        <SettingsGroup title="Editor & Projects">
+          <SettingsRow def={SETTINGS_ROWS.defaultEditor}>
+            <Select
+              value={editorPreset}
+              onValueChange={(value) => handleEditorPresetChange(value as EditorPreset)}
+            >
+              <SelectTrigger className={SETTINGS_CONTROL_CLASS}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {EDITOR_OPTIONS.map((option) => {
+                    // Listed but not selectable when it isn't on this machine —
+                    // picking it would only make every "Open in" fail later.
+                    const installed = !installedEditors || option.value === "custom" || installedEditors.includes(option.value)
+                    return (
+                      <SelectItem key={option.value} value={option.value} disabled={!installed}>
+                        <span className="flex items-center gap-2">
+                          <EditorIcon preset={option.value} className={`h-4 w-4 shrink-0${installed ? "" : " opacity-40 grayscale"}`} />
+                          <span className={installed ? undefined : "text-muted-foreground"}>{option.label}</span>
+                          {installed ? null : (
+                            <span className="ml-auto shrink-0 rounded-full border border-border/70 px-1.5 py-px text-[10px] leading-4 font-medium text-muted-foreground">
+                              Not installed
+                            </span>
+                          )}
+                        </span>
+                      </SelectItem>
+                    )
+                  })}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </SettingsRow>
+
+          {editorPreset === "custom" ? (
+            <SettingsRow
+              nested
+              title="Command Template"
+              description={<>Include {"{path}"} and optionally {"{line}"} and {"{column}"} in your command.</>}
+            >
+              <SettingsField hint={<>Preview: <span className="font-mono">{customEditorPreview}</span></>}>
                 <Input
                   type="text"
                   value={editorCommandDraft}
                   onChange={(event) => setEditorCommandDraft(event.target.value)}
                   onBlur={commitEditorCommand}
                   onKeyDown={(event) => handleSettingsInputKeyDown(event, commitEditorCommand)}
-                  className="font-mono"
+                  spellCheck={false}
+                  autoComplete="off"
+                  className={cn(SETTINGS_CONTROL_CLASS, "font-mono @2xl:w-80")}
                 />
-                <div className="text-xs text-muted-foreground">
-                  Preview: <span className="font-mono">{customEditorPreview}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
+              </SettingsField>
+            </SettingsRow>
+          ) : null}
 
-        <SettingsRow def={SETTINGS_ROWS.newProjectsDirectory}>
-          <div className="flex w-full min-w-0 flex-col items-stretch gap-2 md:w-auto md:items-end">
-            <Input
-              type="text"
-              value={newProjectsDirectoryDraft}
-              onChange={(event) => setNewProjectsDirectoryDraft(event.target.value)}
-              onBlur={commitNewProjectsDirectory}
-              onKeyDown={(event) => handleSettingsInputKeyDown(event, commitNewProjectsDirectory)}
-              spellCheck={false}
-              autoComplete="off"
-              className="w-full font-mono md:w-64"
+          <SettingsRow def={SETTINGS_ROWS.newProjectsDirectory}>
+            <SettingsField
+              hint={`Created on first use${newProjectsDirectory === DEFAULT_NEW_PROJECTS_DIRECTORY ? " (default)" : ""}`}
+            >
+              <Input
+                type="text"
+                value={newProjectsDirectoryDraft}
+                onChange={(event) => setNewProjectsDirectoryDraft(event.target.value)}
+                onBlur={commitNewProjectsDirectory}
+                onKeyDown={(event) => handleSettingsInputKeyDown(event, commitNewProjectsDirectory)}
+                spellCheck={false}
+                autoComplete="off"
+                className={cn(SETTINGS_CONTROL_CLASS, "font-mono")}
+              />
+            </SettingsField>
+          </SettingsRow>
+        </SettingsGroup>
+
+        <SettingsGroup title="Terminal">
+          <SettingsRow def={SETTINGS_ROWS.terminalScrollback}>
+            <SettingsField
+              hint={`${MIN_TERMINAL_SCROLLBACK}–${MAX_TERMINAL_SCROLLBACK} lines${scrollbackLines === DEFAULT_TERMINAL_SCROLLBACK ? " (default)" : ""}`}
+            >
+              <Input
+                type="number"
+                min={MIN_TERMINAL_SCROLLBACK}
+                max={MAX_TERMINAL_SCROLLBACK}
+                step={100}
+                value={scrollbackDraft}
+                onChange={(event) => setScrollbackDraft(event.target.value)}
+                onBlur={commitScrollback}
+                onKeyDown={(event) => handleSettingsInputKeyDown(event, commitScrollback)}
+                className={SETTINGS_NUMBER_INPUT_CLASS}
+              />
+            </SettingsField>
+          </SettingsRow>
+
+          <SettingsRow def={SETTINGS_ROWS.terminalMinColumnWidth}>
+            <SettingsField
+              hint={`${MIN_TERMINAL_MIN_COLUMN_WIDTH}–${MAX_TERMINAL_MIN_COLUMN_WIDTH} px${minColumnWidth === DEFAULT_TERMINAL_MIN_COLUMN_WIDTH ? " (default)" : ""}`}
+            >
+              <Input
+                type="number"
+                min={MIN_TERMINAL_MIN_COLUMN_WIDTH}
+                max={MAX_TERMINAL_MIN_COLUMN_WIDTH}
+                step={10}
+                value={minColumnWidthDraft}
+                onChange={(event) => setMinColumnWidthDraft(event.target.value)}
+                onBlur={commitMinColumnWidth}
+                onKeyDown={(event) => handleSettingsInputKeyDown(event, commitMinColumnWidth)}
+                className={SETTINGS_NUMBER_INPUT_CLASS}
+              />
+            </SettingsField>
+          </SettingsRow>
+        </SettingsGroup>
+
+        <SettingsGroup title="Privacy">
+          <SettingsRow
+            def={SETTINGS_ROWS.anonymousAnalytics}
+            inlineControl
+            description={(
+              <>
+                <span>
+                  Help improve Kanna with anonymous product analytics. Kanna sends tracked event names plus a small set of event properties like current version, environment, update version info, and launch flags. No message content, prompts, file paths, or provider credentials are sent.
+                </span>
+                <span className="mt-1 block">
+                  Stored in {appSettings?.filePathDisplay ?? "~/.kanna/data/settings.json"}.
+                  {" "}
+                  <button
+                    type="button"
+                    onClick={() => setAnalyticsDialogOpen(true)}
+                    className={SETTINGS_INLINE_ACTION_CLASS}
+                  >
+                    View tracked events
+                  </button>
+                </span>
+                {appSettings?.warning ? (
+                  <span className="mt-1 block">{appSettings.warning}</span>
+                ) : null}
+              </>
+            )}
+          >
+            <Switch
+              checked={analyticsEnabled}
+              onCheckedChange={(checked) => {
+                void handleAnalyticsPreferenceChange(checked)
+              }}
+              aria-label={SETTINGS_ROWS.anonymousAnalytics.title}
             />
-            <div className="text-left text-xs text-muted-foreground md:text-right">
-              Created on first use{newProjectsDirectory === DEFAULT_NEW_PROJECTS_DIRECTORY ? " (default)" : ""}
-            </div>
-          </div>
-        </SettingsRow>
-
-        <SettingsRow def={SETTINGS_ROWS.terminalScrollback}>
-          <div className="flex w-full min-w-0 flex-col items-stretch gap-2 md:w-auto md:items-end">
-            <Input
-              type="number"
-              min={MIN_TERMINAL_SCROLLBACK}
-              max={MAX_TERMINAL_SCROLLBACK}
-              step={100}
-              value={scrollbackDraft}
-              onChange={(event) => setScrollbackDraft(event.target.value)}
-              onBlur={commitScrollback}
-              onKeyDown={(event) => handleSettingsInputKeyDown(event, commitScrollback)}
-              className="hide-number-steppers w-full text-left font-mono md:w-28 md:text-right"
-            />
-            <div className="text-left text-xs text-muted-foreground md:text-right">
-              {MIN_TERMINAL_SCROLLBACK}-{MAX_TERMINAL_SCROLLBACK} lines
-              {scrollbackLines === DEFAULT_TERMINAL_SCROLLBACK ? " (default)" : ""}
-            </div>
-          </div>
-        </SettingsRow>
-
-        <SettingsRow def={SETTINGS_ROWS.terminalMinColumnWidth}>
-          <div className="flex w-full min-w-0 flex-col items-stretch gap-2 md:w-auto md:items-end">
-            <Input
-              type="number"
-              min={MIN_TERMINAL_MIN_COLUMN_WIDTH}
-              max={MAX_TERMINAL_MIN_COLUMN_WIDTH}
-              step={10}
-              value={minColumnWidthDraft}
-              onChange={(event) => setMinColumnWidthDraft(event.target.value)}
-              onBlur={commitMinColumnWidth}
-              onKeyDown={(event) => handleSettingsInputKeyDown(event, commitMinColumnWidth)}
-              className="hide-number-steppers w-full text-left font-mono md:w-28 md:text-right"
-            />
-            <div className="text-left text-xs text-muted-foreground md:text-right">
-              {MIN_TERMINAL_MIN_COLUMN_WIDTH}-{MAX_TERMINAL_MIN_COLUMN_WIDTH} px
-              {minColumnWidth === DEFAULT_TERMINAL_MIN_COLUMN_WIDTH ? " (default)" : ""}
-            </div>
-          </div>
-        </SettingsRow>
-
-        <SettingsRow def={SETTINGS_ROWS.transcriptWindow}>
-          <div className="flex w-full min-w-0 flex-col items-stretch gap-2 md:w-auto md:items-end">
-            <Input
-              type="number"
-              min={MIN_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES}
-              max={MAX_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES}
-              step={5}
-              value={transcriptWindowDraft}
-              onChange={(event) => setTranscriptWindowDraft(event.target.value)}
-              onBlur={commitTranscriptWindow}
-              onKeyDown={(event) => handleSettingsInputKeyDown(event, commitTranscriptWindow)}
-              className="hide-number-steppers w-full text-left font-mono md:w-28 md:text-right"
-            />
-            <div className="text-left text-xs text-muted-foreground md:text-right">
-              {MIN_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES}-{MAX_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES} messages
-              {transcriptWindow === DEFAULT_TRANSCRIPT_WINDOW_ASSISTANT_MESSAGES ? " (default)" : ""}
-            </div>
-          </div>
-        </SettingsRow>
-
-        <SettingsRow
-          def={SETTINGS_ROWS.anonymousAnalytics}
-          description={(
-            <>
-              <span>
-                Help improve Kanna with anonymous product analytics. Kanna sends tracked event names plus a small set of event properties like current version, environment, update version info, and launch flags. No message content, prompts, file paths, or provider credentials are sent.
-              </span>
-              <span className="mt-1 block">
-                Stored in {appSettings?.filePathDisplay ?? "~/.kanna/data/settings.json"}.
-                {" "}
-                <button
-                  type="button"
-                  onClick={() => setAnalyticsDialogOpen(true)}
-                  className="underline underline-offset-2 text-foreground hover:text-foreground/80"
-                >
-                  View tracked events
-                </button>
-              </span>
-              {appSettings?.warning ? (
-                <span className="mt-1 block">{appSettings.warning}</span>
-              ) : null}
-            </>
-          )}
-        >
-          <SegmentedControl
-            value={analyticsSettingValue}
-            onValueChange={(value) => {
-              void handleAnalyticsPreferenceChange(value)
-            }}
-            options={ENABLED_DISABLED_OPTIONS}
-            size="sm"
-          />
-        </SettingsRow>
-      </div>
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsGroups>
       <Dialog open={analyticsDialogOpen} onOpenChange={setAnalyticsDialogOpen}>
         <DialogContent size="lg">
           <DialogBody className="space-y-4">

@@ -19,7 +19,6 @@ export interface ProjectRightSidebarUiState {
    * the widget falls back to its default (open when it holds only a few rows).
    */
   expanded: Partial<Record<WidgetDisclosureId, boolean>>
-  collapsedPaths: Record<string, boolean>
   summary: string
   description: string
 }
@@ -32,8 +31,6 @@ interface RightSidebarState {
   openWidgets: (projectId: string) => void
   hideWidgets: (projectId: string) => void
   setSize: (size: number) => void
-  reconcileCollapsedPaths: (projectId: string, paths: string[]) => void
-  toggleCollapsedPath: (projectId: string, path: string) => void
   setWidgetExpanded: (projectId: string, id: WidgetDisclosureId, expanded: boolean) => void
   setCommitDraft: (projectId: string, draft: Pick<ProjectRightSidebarUiState, "summary" | "description">) => void
   clearCommitDraft: (projectId: string) => void
@@ -51,7 +48,6 @@ function clampSize(size: number) {
 function createDefaultProjectUiState(): ProjectRightSidebarUiState {
   return {
     expanded: {},
-    collapsedPaths: {},
     summary: "",
     description: "",
   }
@@ -64,7 +60,8 @@ function isWidgetsOpen(projects: Record<string, ProjectRightSidebarVisibilitySta
 /**
  * v8 folded the git / browser panels into one widget column: any panel that
  * was open (or the pre-panel `isVisible` flag) now means the widgets are open.
- * The embedded browser's state and the Changes/History picker are dropped.
+ * The embedded browser's state, the Changes/History picker and the per-file
+ * diff collapse state (diffs open in the viewer now) are dropped.
  */
 export function migrateRightSidebarStore(persistedState: unknown, version = 0) {
   if (!persistedState || typeof persistedState !== "object") {
@@ -90,7 +87,6 @@ export function migrateRightSidebarStore(persistedState: unknown, version = 0) {
       projectId,
       {
         expanded: ui.expanded ?? {},
-        collapsedPaths: ui.collapsedPaths ?? {},
         summary: ui.summary ?? "",
         description: ui.description ?? "",
       },
@@ -121,40 +117,6 @@ export const useRightSidebarStore = create<RightSidebarState>()(
           ? { projects: { ...state.projects, [projectId]: { widgetsOpen: false } } }
           : state)),
       setSize: (size) => set({ size: clampSize(size) }),
-      reconcileCollapsedPaths: (projectId, paths) => set((state) => {
-        const current = state.projectUi[projectId] ?? createDefaultProjectUiState()
-        const nextCollapsedPaths = Object.fromEntries(paths.map((path) => [path, current.collapsedPaths[path] ?? true]))
-        if (
-          Object.keys(current.collapsedPaths).length === Object.keys(nextCollapsedPaths).length
-          && Object.entries(nextCollapsedPaths).every(([path, collapsed]) => current.collapsedPaths[path] === collapsed)
-        ) {
-          return state
-        }
-        return {
-          projectUi: {
-            ...state.projectUi,
-            [projectId]: {
-              ...current,
-              collapsedPaths: nextCollapsedPaths,
-            },
-          },
-        }
-      }),
-      toggleCollapsedPath: (projectId, path) => set((state) => {
-        const current = state.projectUi[projectId] ?? createDefaultProjectUiState()
-        return {
-          projectUi: {
-            ...state.projectUi,
-            [projectId]: {
-              ...current,
-              collapsedPaths: {
-                ...current.collapsedPaths,
-                [path]: !(current.collapsedPaths[path] ?? true),
-              },
-            },
-          },
-        }
-      }),
       setWidgetExpanded: (projectId, id, expanded) => set((state) => {
         const current = state.projectUi[projectId] ?? createDefaultProjectUiState()
         // `?? {}`: a state persisted before this map existed has no `expanded`.

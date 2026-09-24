@@ -11,9 +11,10 @@ import {
 import { formatPathWithTilde } from "../../../lib/pathUtils"
 import { cn } from "../../../lib/utils"
 import { useConnectionStore } from "../../../stores/connectionStore"
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "../../ui/context-menu"
+import { ContextMenuItem } from "../../ui/context-menu"
 import { InputPopover, PopoverMenuItem } from "../ChatPreferenceControls"
-import { useWidgetExpanded, WidgetCard, WidgetPresence, WidgetRowMenuButton, widgetRowActivation, WIDGET_ROW_CLASS } from "./WidgetCard"
+import { WidgetError, WidgetList, WidgetRow } from "./parts"
+import { useWidgetExpanded, WidgetCard, WidgetPresence } from "./WidgetCard"
 
 const POLL_INTERVAL_MS = 7_000
 
@@ -159,8 +160,18 @@ export function PortsWidget({
         count={visibleServers.length > 0
           ? visibleServers.length
           : scope === "project" && otherServerCount > 0 ? `${otherServerCount} elsewhere` : undefined}
-        expanded={expanded || error !== null}
-        onToggle={visibleServers.length > 0 ? () => setExpanded(!expanded) : undefined}
+        expanded={(visibleServers.length > 0 && expanded) || error !== null}
+        // With nothing here but servers elsewhere, the header is the way to
+        // them: it widens the filter to all projects and opens the list,
+        // rather than a count you'd have to find the filter to act on.
+        onToggle={visibleServers.length > 0
+          ? () => setExpanded(!expanded)
+          : otherServerCount > 0
+            ? () => {
+              setScope("all")
+              setExpanded(true)
+            }
+            : undefined}
         actions={(
           // The same filter popover as the left sidebar's New Chat row.
           <InputPopover
@@ -199,12 +210,10 @@ export function PortsWidget({
         )}
       >
         {visibleServers.length > 0 || error ? (
-          <div className="p-1.5">
-            {error ? (
-              <p className="mb-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">{error}</p>
-            ) : null}
+          <WidgetList>
+            {error ? <WidgetError>{error}</WidgetError> : null}
             {visibleServers.map(renderServer)}
-          </div>
+          </WidgetList>
         ) : null}
       </WidgetCard>
     </WidgetPresence>
@@ -214,59 +223,56 @@ export function PortsWidget({
     const isExposing = exposingPorts.has(server.port)
     const openUrl = isCloud && server.publicUrl ? server.publicUrl : server.address
     return (
-      <ContextMenu key={server.address}>
-        <ContextMenuTrigger asChild>
-          <div
-            {...widgetRowActivation(() => openServer(server))}
-            aria-busy={isExposing}
-            className={cn(WIDGET_ROW_CLASS, "group cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring")}
-          >
-            <span className="flex size-4 shrink-0 items-center justify-center">
-              <span className={cn("size-1.5 rounded-full", server.sameProject ? "bg-success" : "bg-muted-foreground/40")} />
-            </span>
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span className="min-w-0 truncate font-medium">{server.title}</span>
-                {isExposing
-                  ? <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" aria-label="Exposing" />
-                  : server.publicUrl ? <Globe className="size-3 shrink-0 text-info" aria-label="Exposed to the internet" /> : null}
-              </span>
-              <span className="min-w-0 truncate text-xs text-muted-foreground">
-                {isExposing ? "Exposing…" : server.publicUrl ?? server.address}
-                {!server.sameProject && server.ownerPath ? ` · ${formatPathWithTilde(server.ownerPath)}` : ""}
-              </span>
-            </span>
-            <WidgetRowMenuButton label="Port actions" />
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onSelect={() => window.open(openUrl, "_blank", "noopener,noreferrer")}>
-            <SquareArrowOutUpRight className="size-3.5" />
-            <span>Open in New Tab</span>
-          </ContextMenuItem>
-          {server.publicUrl ? (
-            <>
-              <ContextMenuItem onSelect={() => void navigator.clipboard?.writeText(server.publicUrl ?? "")}>
-                <Copy className="size-3.5" />
-                <span>Copy Public URL</span>
-              </ContextMenuItem>
-              <ContextMenuItem onSelect={() => unexposeServer(server)}>
-                <GlobeLock className="size-3.5" />
-                <span>Stop Exposing</span>
-              </ContextMenuItem>
-            </>
-          ) : (
-            <ContextMenuItem disabled={isExposing} onSelect={() => void exposeServer(server)}>
-              <Globe className="size-3.5" />
-              <span>Expose to Internet</span>
+      <WidgetRow
+        key={server.address}
+        icon={<span className={cn("size-1.5 rounded-full", server.sameProject ? "bg-success" : "bg-muted-foreground/40")} />}
+        title={(
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 truncate">{server.title}</span>
+            {isExposing
+              ? <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" aria-label="Exposing" />
+              : server.publicUrl ? <Globe className="size-3 shrink-0 text-info" aria-label="Exposed to the internet" /> : null}
+          </span>
+        )}
+        subtitle={(
+          <>
+            {isExposing ? "Exposing…" : server.publicUrl ?? server.address}
+            {!server.sameProject && server.ownerPath ? ` · ${formatPathWithTilde(server.ownerPath)}` : ""}
+          </>
+        )}
+        onActivate={() => openServer(server)}
+        aria-busy={isExposing}
+        menuLabel="Port actions"
+        menu={(
+          <>
+            <ContextMenuItem onSelect={() => window.open(openUrl, "_blank", "noopener,noreferrer")}>
+              <SquareArrowOutUpRight className="size-3.5" />
+              <span>Open in New Tab</span>
             </ContextMenuItem>
-          )}
-          <ContextMenuItem onSelect={() => killServer(server)} className="text-destructive focus:text-destructive">
-            <Trash2 className="size-3.5" />
-            <span>Kill Process</span>
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+            {server.publicUrl ? (
+              <>
+                <ContextMenuItem onSelect={() => void navigator.clipboard?.writeText(server.publicUrl ?? "")}>
+                  <Copy className="size-3.5" />
+                  <span>Copy Public URL</span>
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => unexposeServer(server)}>
+                  <GlobeLock className="size-3.5" />
+                  <span>Stop Exposing</span>
+                </ContextMenuItem>
+              </>
+            ) : (
+              <ContextMenuItem disabled={isExposing} onSelect={() => void exposeServer(server)}>
+                <Globe className="size-3.5" />
+                <span>Expose to Internet</span>
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem onSelect={() => killServer(server)} className="text-destructive focus:text-destructive">
+              <Trash2 className="size-3.5" />
+              <span>Kill Process</span>
+            </ContextMenuItem>
+          </>
+        )}
+      />
     )
   }
 }

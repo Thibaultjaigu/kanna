@@ -1,66 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { GitWidgets, summarizeChanges, visibleHistoryEntries, canIgnoreDiffFile, canIgnoreDiffFolder, getPrimaryCommitActionPrefix, shouldLoadDiffPatchNow } from "./GitWidgets"
+import { GitWidgets, summarizeChanges, visibleHistoryEntries, canIgnoreDiffFile, canIgnoreDiffFolder, getPrimaryCommitActionPrefix } from "./GitWidgets"
 import { TooltipProvider } from "../../ui/tooltip"
 
 describe("GitWidgets", () => {
-  test("loads missing patches for expanded rows", () => {
-    expect(shouldLoadDiffPatchNow({
-      isCollapsed: false,
-      hasPreviewAttachment: false,
-      patch: undefined,
-      patchError: undefined,
-      isPatchLoading: false,
-    })).toBe(true)
-  })
-
-  test("does not load patches for collapsed rows", () => {
-    expect(shouldLoadDiffPatchNow({
-      isCollapsed: true,
-      hasPreviewAttachment: false,
-      patch: undefined,
-      patchError: undefined,
-      isPatchLoading: false,
-    })).toBe(false)
-  })
-
-  test("does not load patches for preview attachments", () => {
-    expect(shouldLoadDiffPatchNow({
-      isCollapsed: false,
-      hasPreviewAttachment: true,
-      patch: undefined,
-      patchError: undefined,
-      isPatchLoading: false,
-    })).toBe(false)
-  })
-
-  test("does not load patches when patch content, loading state, or errors already exist", () => {
-    expect(shouldLoadDiffPatchNow({
-      isCollapsed: false,
-      hasPreviewAttachment: false,
-      patch: "diff --git a/app.ts b/app.ts",
-      patchError: undefined,
-      isPatchLoading: false,
-    })).toBe(false)
-
-    expect(shouldLoadDiffPatchNow({
-      isCollapsed: false,
-      hasPreviewAttachment: false,
-      patch: undefined,
-      patchError: "Failed to load patch",
-      isPatchLoading: false,
-    })).toBe(false)
-
-    expect(shouldLoadDiffPatchNow({
-      isCollapsed: false,
-      hasPreviewAttachment: false,
-      patch: undefined,
-      patchError: undefined,
-      isPatchLoading: true,
-    })).toBe(false)
-  })
-
   test("with no changes: no Changes section, just Branch and History", () => {
     const markup = renderToStaticMarkup(createElement(
       TooltipProvider,
@@ -85,8 +29,6 @@ describe("GitWidgets", () => {
           },
         },
         editorLabel: "Cursor",
-        diffRenderMode: "unified",
-        wrapLines: false,
         onOpenFile: () => {},
         onOpenInFinder: () => {},
         onDiscardFile: () => {},
@@ -94,15 +36,12 @@ describe("GitWidgets", () => {
         onIgnoreFolder: () => {},
         onCopyFilePath: () => {},
         onCopyRelativePath: () => {},
-        onLoadPatch: async () => "",
         onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
         onCheckoutBranch: async () => {},
         onCreateBranch: async () => {},
         onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
         onCommit: async () => null,
         onSyncWithRemote: async () => null,
-        onDiffRenderModeChange: () => {},
-        onWrapLinesChange: () => {},
       })
     ))
 
@@ -142,8 +81,6 @@ describe("GitWidgets", () => {
           branchHistory: { entries: [] },
         },
         editorLabel: "Cursor",
-        diffRenderMode: "unified",
-        wrapLines: false,
         onOpenFile: () => {},
         onOpenInFinder: () => {},
         onDiscardFile: () => {},
@@ -151,15 +88,12 @@ describe("GitWidgets", () => {
         onIgnoreFolder: () => {},
         onCopyFilePath: () => {},
         onCopyRelativePath: () => {},
-        onLoadPatch: async () => "",
         onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
         onCheckoutBranch: async () => {},
         onCreateBranch: async () => {},
         onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
         onCommit: async () => null,
         onSyncWithRemote: async () => null,
-        onDiffRenderModeChange: () => {},
-        onWrapLinesChange: () => {},
       })
     ))
 
@@ -200,8 +134,6 @@ describe("GitWidgets", () => {
           branchHistory: { entries: [] },
         },
         editorLabel: "Cursor",
-        diffRenderMode: "unified",
-        wrapLines: false,
         onOpenFile: () => {},
         onOpenInFinder: () => {},
         onDiscardFile: () => {},
@@ -209,15 +141,12 @@ describe("GitWidgets", () => {
         onIgnoreFolder: () => {},
         onCopyFilePath: () => {},
         onCopyRelativePath: () => {},
-        onLoadPatch: async () => "",
         onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
         onCheckoutBranch: async () => {},
         onCreateBranch: async () => {},
         onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
         onCommit: async () => null,
         onSyncWithRemote: async () => null,
-        onDiffRenderModeChange: () => {},
-        onWrapLinesChange: () => {},
       })
     ))
 
@@ -269,8 +198,6 @@ describe("GitWidgets", () => {
         projectId: "project-1",
         diffs: { status: "ready", branchName: "main", hasUpstream: true, aheadCount: 2, files: [], branchHistory: { entries } },
         editorLabel: "Cursor",
-        diffRenderMode: "unified",
-        wrapLines: false,
         onOpenFile: () => {},
         onOpenInFinder: () => {},
         onDiscardFile: () => {},
@@ -278,15 +205,12 @@ describe("GitWidgets", () => {
         onIgnoreFolder: () => {},
         onCopyFilePath: () => {},
         onCopyRelativePath: () => {},
-        onLoadPatch: async () => "",
         onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
         onCheckoutBranch: async () => {},
         onCreateBranch: async () => {},
         onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
         onCommit: async () => null,
         onSyncWithRemote: async () => null,
-        onDiffRenderModeChange: () => {},
-        onWrapLinesChange: () => {},
       })
     ))
 
@@ -335,8 +259,6 @@ describe("GitWidgets", () => {
         projectId: "project-1",
         diffs: { status: "unknown", files: [], branchHistory: { entries: [] } },
         editorLabel: "Cursor",
-        diffRenderMode: "unified",
-        wrapLines: false,
         onOpenFile: () => {},
         onOpenInFinder: () => {},
         onDiscardFile: () => {},
@@ -344,15 +266,12 @@ describe("GitWidgets", () => {
         onIgnoreFolder: () => {},
         onCopyFilePath: () => {},
         onCopyRelativePath: () => {},
-        onLoadPatch: async () => "",
         onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
         onCheckoutBranch: async () => {},
         onCreateBranch: async () => {},
         onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
         onCommit: async () => null,
         onSyncWithRemote: async () => null,
-        onDiffRenderModeChange: () => {},
-        onWrapLinesChange: () => {},
       })
     ))
 
@@ -375,8 +294,6 @@ describe("GitWidgets", () => {
           branchHistory: { entries: [] },
         },
         editorLabel: "Cursor",
-        diffRenderMode: "unified",
-        wrapLines: false,
         onOpenFile: () => {},
         onOpenInFinder: () => {},
         onDiscardFile: () => {},
@@ -384,15 +301,12 @@ describe("GitWidgets", () => {
         onIgnoreFolder: () => {},
         onCopyFilePath: () => {},
         onCopyRelativePath: () => {},
-        onLoadPatch: async () => "",
         onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
         onCheckoutBranch: async () => {},
         onCreateBranch: async () => {},
         onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
         onCommit: async () => null,
         onSyncWithRemote: async () => null,
-        onDiffRenderModeChange: () => {},
-        onWrapLinesChange: () => {},
       })
     ))
 
@@ -417,8 +331,6 @@ describe("GitWidgets", () => {
           branchHistory: { entries: [] },
         },
         editorLabel: "Cursor",
-        diffRenderMode: "unified",
-        wrapLines: false,
         onOpenFile: () => {},
         onOpenInFinder: () => {},
         onDiscardFile: () => {},
@@ -426,15 +338,12 @@ describe("GitWidgets", () => {
         onIgnoreFolder: () => {},
         onCopyFilePath: () => {},
         onCopyRelativePath: () => {},
-        onLoadPatch: async () => "",
         onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
         onCheckoutBranch: async () => {},
         onCreateBranch: async () => {},
         onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
         onCommit: async () => null,
         onSyncWithRemote: async () => null,
-        onDiffRenderModeChange: () => {},
-        onWrapLinesChange: () => {},
       })
     ))
 
@@ -502,5 +411,81 @@ describe("GitWidgets", () => {
       deletions: 0,
       patchDigest: "digest-6",
     })).toBe(false)
+  })
+
+  test("Changes is an index: rows with status and folder, a Review strip, and no diffs in the card", () => {
+    const files = Array.from({ length: 15 }, (_, index) => ({
+      path: `src/feature/file${index}.ts`,
+      changeType: index === 0 ? "added" as const : "modified" as const,
+      isUntracked: false,
+      additions: 1,
+      deletions: 0,
+      patchDigest: `d${index}`,
+    }))
+    const markup = renderToStaticMarkup(createElement(
+      TooltipProvider,
+      null,
+      createElement(GitWidgets, {
+        projectId: "project-index",
+        diffs: { status: "ready", branchName: "main", files, branchHistory: { entries: [] } },
+        editorLabel: "Cursor",
+        onOpenFile: () => {},
+        onOpenInFinder: () => {},
+        onDiscardFile: () => {},
+        onIgnoreFile: () => {},
+        onIgnoreFolder: () => {},
+        onCopyFilePath: () => {},
+        onCopyRelativePath: () => {},
+        onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
+        onCheckoutBranch: async () => {},
+        onCreateBranch: async () => {},
+        onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
+        onCommit: async () => null,
+        onSyncWithRemote: async () => null,
+      })
+    ))
+    // 15 files is a large card, so it starts closed; the header still counts
+    // them and the commit box stays in view.
+    expect(markup).toContain("15 files changed")
+    expect(markup).not.toContain("Side-by-side diff")
+  })
+
+  test("an open Changes card lists each file as name, folder and status, under a Review strip", () => {
+    const markup = renderToStaticMarkup(createElement(
+      TooltipProvider,
+      null,
+      createElement(GitWidgets, {
+        projectId: "project-rows",
+        diffs: {
+          status: "ready",
+          branchName: "main",
+          files: [
+            { path: "src/feature/new.ts", changeType: "added", isUntracked: true, additions: 4, deletions: 0, patchDigest: "d1" },
+            { path: "README.md", changeType: "deleted", isUntracked: false, additions: 0, deletions: 9, patchDigest: "d2" },
+          ],
+          branchHistory: { entries: [] },
+        },
+        editorLabel: "Cursor",
+        onOpenFile: () => {},
+        onOpenInFinder: () => {},
+        onDiscardFile: () => {},
+        onIgnoreFile: () => {},
+        onIgnoreFolder: () => {},
+        onCopyFilePath: () => {},
+        onCopyRelativePath: () => {},
+        onListBranches: async () => ({ recent: [], local: [], remote: [], pullRequests: [], pullRequestsStatus: "unavailable" }),
+        onCheckoutBranch: async () => {},
+        onCreateBranch: async () => {},
+        onGenerateCommitMessage: async () => ({ subject: "", body: "" }),
+        onCommit: async () => null,
+        onSyncWithRemote: async () => null,
+      })
+    ))
+    expect(markup).toContain(">new.ts<")
+    expect(markup).toContain(">src/feature<")
+    expect(markup).toContain(">A<")
+    expect(markup).toContain(">D<")
+    expect(markup).toContain(">Review all<")
+    expect(markup).toContain("All files in the commit")
   })
 })

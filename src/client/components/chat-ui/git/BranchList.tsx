@@ -5,8 +5,9 @@ import { formatRelativeTime } from "../../../lib/formatters"
 import { cn } from "../../../lib/utils"
 import { Input } from "../../ui/input"
 import { Skeleton } from "../../ui/skeleton"
-import { ROW_HIGHLIGHT_CLASS, ROW_HOVER_CLASS } from "../widgets/WidgetCard"
+import { WIDGET_ROW_REVEAL_CLASS, WIDGET_STRIP_INPUT_CLASS, WidgetIconColumn, WidgetListLabel, WidgetRow, WidgetStrip } from "../widgets/parts"
 
+/** A boxed search field, for the merge dialog. The widget card uses BranchSearchRow. */
 export function BranchSearchInput({
   value,
   onChange,
@@ -36,13 +37,8 @@ export function BranchSearchInput({
 }
 
 /**
- * Search as the first row of a widget body rather than a boxed field: a
- * full-bleed strip over the list, like the Changes card's toolbar. Its glyph
- * sits in the header's 16px icon column and the text starts where the
- * header's title does, so it reads as part of the card, not a form in it.
- *
- * A combobox over the list below it: the arrow keys move the list's active
- * option, and the input never loses focus.
+ * The Branch card's search: a Strip over the list, and a combobox over it.
+ * The arrow keys move the list's active option; the input keeps focus.
  */
 export function BranchSearchRow({
   inputRef,
@@ -62,10 +58,7 @@ export function BranchSearchRow({
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void
 }) {
   return (
-    <div className="flex h-10 items-center gap-2 border-b border-border px-3">
-      <span className="flex w-4 shrink-0 items-center justify-center">
-        <Search className="size-3.5 text-muted-foreground" />
-      </span>
+    <WidgetStrip leading={<Search />}>
       <input
         ref={inputRef}
         value={value}
@@ -80,18 +73,35 @@ export function BranchSearchRow({
         autoComplete="off"
         spellCheck={false}
         data-1p-ignore
-        className="h-full min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+        className={WIDGET_STRIP_INPUT_CLASS}
       />
-    </div>
+    </WidgetStrip>
   )
 }
 
 /**
- * Row geometry shared by branch rows, their skeletons and the picker's extra
- * rows. The transparent border is room for the widget row highlight's border
- * (ROW_HIGHLIGHT_CLASS), so a lit row doesn't shift.
+ * What a branch row shows. A PR row is laid out like a History commit row:
+ * its title, then "#number · author" under it, its age on the right (and its
+ * checks under that, from the picker). A branch row is its name and age.
  */
-export const BRANCH_ROW_CLASS = "flex w-full items-start gap-2 rounded-lg border border-transparent px-2 py-2 text-left"
+export function branchRowContent(entry: ChatBranchListEntry) {
+  if (entry.kind === "pull_request") {
+    return {
+      icon: <GitPullRequest />,
+      title: entry.prTitle ?? entry.displayName,
+      // The author's full name, as History's commit rows show theirs; the
+      // login when GitHub has no name for them.
+      subtitle: [entry.prNumber ? `#${entry.prNumber}` : null, entry.authorName ?? entry.authorLogin].filter(Boolean).join(" · ") || undefined,
+      meta: entry.updatedAt ? formatRelativeTime(entry.updatedAt) : undefined,
+    }
+  }
+  return {
+    icon: <GitBranch />,
+    title: entry.displayName,
+    subtitle: entry.headLabel ?? undefined,
+    meta: entry.updatedAt ? formatRelativeTime(entry.updatedAt) : undefined,
+  }
+}
 
 export function BranchListSection({
   title,
@@ -103,9 +113,12 @@ export function BranchListSection({
   optionId,
   optionClassName,
   disabled,
-  stickyTitle = false,
-  rowClassName,
   footer,
+  expanded = true,
+  onToggle,
+  revealFrom,
+  subMetaFor,
+  iconFor,
   onSelect,
 }: {
   title: string
@@ -123,84 +136,59 @@ export function BranchListSection({
   optionId?: (entry: ChatBranchListEntry) => string
   optionClassName?: (isActive: boolean) => string | undefined
   disabled?: boolean
-  stickyTitle?: boolean
-  /** Overrides row padding, e.g. to line icons up with a widget header. */
-  rowClassName?: string
   /** A last row after the entries, e.g. "N more". */
   footer?: ReactNode
+  /** Folded, the section is just its header. */
+  expanded?: boolean
+  /** Makes the header fold the section, like the left sidebar's sections. */
+  onToggle?: () => void
+  /** Rows from this index on came from a "Show more", and fade in. */
+  revealFrom?: number
+  /** State under a row's age, on its second line (a PR's checks). */
+  subMetaFor?: (entry: ChatBranchListEntry) => ReactNode
+  /** Replaces a row's main icon (a PR's merge state), when there's one to show. */
+  iconFor?: (entry: ChatBranchListEntry) => ReactNode
   onSelect: (entry: ChatBranchListEntry) => void
 }) {
   if (entries.length === 0 && !emptyLabel) {
     return null
   }
 
+  // A fragment, not a wrapper: the label and rows sit directly in the List,
+  // touching the rows of the sections around them.
   return (
-    // No space between rows: they touch, so the highlight never drops out as
-    // the pointer moves down the list. The label's padding spaces sections.
-    <div role={optionId ? "group" : undefined} aria-label={optionId ? title : undefined}>
-      <div className={cn(
-        "flex items-baseline gap-1.5 px-1 pb-1 pt-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground",
-        stickyTitle && "sticky top-0 z-10 bg-background"
-      )}>
-        <span>{title}</span>
-        {count !== undefined ? <span className="tabular-nums tracking-normal text-muted-foreground/70">{count}</span> : null}
-      </div>
-      {entries.length === 0 ? (
-        <div className="px-1 py-1 text-xs text-muted-foreground">{emptyLabel}</div>
+    <>
+      <WidgetListLabel count={count} expanded={expanded} onToggle={onToggle}>{title}</WidgetListLabel>
+      {!expanded ? null : entries.length === 0 ? (
+        <div className="px-1.5 pb-1 text-xs text-muted-foreground">{emptyLabel}</div>
       ) : (
-        entries.map((entry) => {
-          const isSelected = selectedName === entry.name
+        entries.map((entry, index) => {
           const id = optionId?.(entry)
           const isActive = id !== undefined && id === activeOptionId
           return (
-            <button
+            <WidgetRow
               key={entry.id}
+              {...branchRowContent(entry)}
+              {...(iconFor?.(entry) ? { icon: iconFor(entry) } : {})}
               id={id}
-              type="button"
+              // For the picker's hover card, which finds the row by it.
+              rowKey={entry.id}
+              subMeta={subMetaFor?.(entry)}
               role={id ? "option" : undefined}
               aria-selected={id ? isActive : undefined}
               // Keeps focus in the search field when the list is a combobox's.
               tabIndex={id ? -1 : undefined}
+              active={selectedName === entry.name}
+              highlightClassName={optionClassName?.(isActive)}
               disabled={disabled}
-              data-active={id ? isActive : undefined}
-              onClick={() => onSelect(entry)}
-              className={cn(
-                BRANCH_ROW_CLASS,
-                "disabled:opacity-60",
-                rowClassName,
-                optionClassName
-                  ? optionClassName(isActive)
-                  : isSelected ? cn(ROW_HIGHLIGHT_CLASS, "text-foreground") : ROW_HOVER_CLASS
-              )}
-            >
-              {/* A 16px box, one text line tall, so the 14px glyph centers on
-                  the first line and on any column of 16px icons above it. */}
-              <span className="flex h-5 w-4 shrink-0 items-center justify-center">
-                {entry.kind === "pull_request"
-                  ? <GitPullRequest className="h-3.5 w-3.5 text-muted-foreground" />
-                  : <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex w-full items-center gap-3">
-                  <div className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-sm text-foreground">{entry.displayName}</div>
-                  {entry.updatedAt ? (
-                    <div className="ml-auto shrink-0 text-right text-[11px] text-muted-foreground">
-                      {formatRelativeTime(entry.updatedAt)}
-                    </div>
-                  ) : null}
-                </div>
-                {(entry.kind === "pull_request" && entry.description) || entry.headLabel ? (
-                  <div className="truncate text-xs text-muted-foreground">
-                    {entry.kind === "pull_request" ? (entry.description ?? entry.headLabel ?? entry.name) : (entry.headLabel ?? undefined)}
-                  </div>
-                ) : null}
-              </div>
-            </button>
+              className={revealFrom !== undefined && index >= revealFrom ? WIDGET_ROW_REVEAL_CLASS : undefined}
+              onActivate={() => onSelect(entry)}
+            />
           )
         })
       )}
-      {footer}
-    </div>
+      {expanded ? footer : null}
+    </>
   )
 }
 
@@ -209,20 +197,22 @@ export function BranchListSection({
 const SKELETON_NAME_WIDTHS = ["58%", "42%", "70%", "36%", "52%"]
 
 /**
- * The branch list while it loads: a section label and rows in the real rows'
- * geometry (icon column, name, trailing age), so the list lands in place.
+ * The branch list while it loads: a label and rows in WidgetRow's geometry
+ * (icon column, name, trailing age), so the list lands in place.
  */
-export function BranchListSkeleton({ rows = 5, rowClassName }: { rows?: number; rowClassName?: string }) {
+export function BranchListSkeleton({ rows = 5 }: { rows?: number }) {
   return (
-    <div aria-busy aria-label="Loading branches">
-      <div className="px-1 pb-1.5 pt-2.5">
-        <Skeleton className="h-2.5 w-14" />
+    <div aria-busy aria-label="Loading branches" className="flex flex-col gap-px">
+      {/* The header's text-sm line, not a label bar: it lands where the real
+          "Recent" header will. */}
+      <div className="flex h-5 items-center px-1.5 pb-1 pt-1 box-content">
+        <Skeleton className="h-3 w-14" />
       </div>
       {Array.from({ length: rows }, (_, index) => (
-        <div key={index} className={cn(BRANCH_ROW_CLASS, "items-center", rowClassName)}>
-          <span className="flex h-5 w-4 shrink-0 items-center justify-center">
+        <div key={index} className="flex items-center gap-2 rounded-lg border border-transparent px-[5px] py-1.5">
+          <WidgetIconColumn>
             <Skeleton className="size-3.5 rounded-full" />
-          </span>
+          </WidgetIconColumn>
           <Skeleton className="h-3 flex-none" style={{ width: SKELETON_NAME_WIDTHS[index % SKELETON_NAME_WIDTHS.length] }} />
           <Skeleton className="ml-auto h-2.5 w-7" />
         </div>

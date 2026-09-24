@@ -14,6 +14,7 @@ import { formatRelativeTime } from "../../../lib/formatters"
 import { PROVIDER_ICONS } from "../ChatPreferenceControls"
 import { Button } from "../../ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip"
+import { WidgetStatic } from "./parts"
 import { useWidgetExpanded, WidgetCard, WidgetPresence } from "./WidgetCard"
 
 /**
@@ -107,7 +108,9 @@ export function UsageWidget({
         onToggle={() => setExpanded(!expanded)}
         actions={expanded ? refreshButton : collapsedSummary}
       >
-        <UsageWindowRows snapshot={usage} compact className="px-3 py-3" />
+        <WidgetStatic>
+          <UsageWindowRows snapshot={usage} compact />
+        </WidgetStatic>
       </WidgetCard>
     </WidgetPresence>
   )

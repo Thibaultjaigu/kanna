@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
 import { Check, Loader2, Network, X } from "lucide-react"
 import type { SubagentActivity } from "../../../../shared/types"
-import { cn } from "../../../lib/utils"
-import { SwapIn, WidgetCard, WIDGET_ROW_CLASS } from "./WidgetCard"
+import { WidgetList, WidgetRow } from "./parts"
+import { SwapIn, WidgetCard } from "./WidgetCard"
 
 /**
  * Work the agent delegated this turn: subagents, background shells, monitors.
@@ -65,42 +65,28 @@ export function AgentsWidget({
       title="Agents"
       count={formatAgentsCount(subagents)}
     >
-      <ul className="p-1.5">
+      <WidgetList>
         {subagents.map((agent) => {
           const { Icon, className, label } = STATUS_ICON[agent.status]
           const toolId = toolIds.get(agent.id)
-          const content = (
-            <>
-              {/* Rows share the header's geometry (see WIDGET_ROW_CLASS), so
-                  each status glyph sits on the header icon's centerline. */}
-              <span className="flex size-4 shrink-0 items-center justify-center">
-                <SwapIn swapKey={agent.status}>
-                  <Icon role="img" className={cn("size-3.5", className)} aria-label={label} />
-                </SwapIn>
-              </span>
-              <span className="min-w-0 flex-1 truncate">{agent.label}</span>
-              <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
-                {formatElapsed((agent.endedAt ?? now) - agent.startedAt)}
-              </span>
-            </>
-          )
           return (
-            <li key={agent.id}>
-              {toolId ? (
-                // Opens the chat at the call that spawned it: a list of
-                // labels with timers otherwise leaves "where is that?" open.
-                <button type="button" title={`${agent.label}: show in chat`} onClick={() => onJumpToToolCall(toolId)} className={WIDGET_ROW_CLASS}>
-                  {content}
-                </button>
-              ) : (
-                <div title={agent.label} className={cn(WIDGET_ROW_CLASS, "hover:border-transparent hover:bg-transparent")}>
-                  {content}
-                </div>
+            <WidgetRow
+              key={agent.id}
+              icon={(
+                <SwapIn swapKey={agent.status}>
+                  <Icon role="img" className={className} aria-label={label} />
+                </SwapIn>
               )}
-            </li>
+              title={agent.label}
+              meta={formatElapsed((agent.endedAt ?? now) - agent.startedAt)}
+              // Opens the chat at the call that spawned it: a list of labels
+              // with timers otherwise leaves "where is that?" open.
+              onActivate={toolId ? () => onJumpToToolCall(toolId) : undefined}
+              tooltip={toolId ? `${agent.label}: show in chat` : agent.label}
+            />
           )
         })}
-      </ul>
+      </WidgetList>
     </WidgetCard>
   )
 }

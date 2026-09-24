@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react"
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react"
 import { Ellipsis, ExternalLink, FolderOpen, Loader2, Search, Trash2, X } from "lucide-react"
 import type {
   AgentProvider,
@@ -14,6 +14,8 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip"
 import { PROVIDER_ICONS } from "../../components/chat-ui/ChatPreferenceControls"
 import type { KannaState } from "../useKannaState"
+import { cn } from "../../lib/utils"
+import { SETTINGS_LIST_CARD_CLASS, SettingsNotice } from "./shared"
 
 const PROVIDER_LABELS: Record<AgentProvider, string> = {
   claude: "Claude",
@@ -28,14 +30,6 @@ function formatInstallCount(count: number) {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M installs`
   if (count >= 1_000) return `${(count / 1_000).toFixed(1).replace(/\.0$/, "")}K installs`
   return `${count} install${count === 1 ? "" : "s"}`
-}
-
-function SkillErrorBlock({ message }: { message: string }) {
-  return (
-    <pre className="max-w-full overflow-x-auto whitespace-pre-wrap rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive">
-      {message}
-    </pre>
-  )
 }
 
 /** Raw harness icons for the providers that can invoke this skill (root-attributed). */
@@ -86,7 +80,7 @@ function GlobalSkillCard({
   const href = skill.source ? `https://skills.sh/${skill.source}/${skill.name}` : null
   const description = skill.description || skill.source || skill.paths[0] || ""
 
-  // Same trick as DiffFileCard: the "..." button synthesizes a contextmenu
+  // Same trick as the widget rows' kebab: the "..." button synthesizes a contextmenu
   // event on the card so click and right-click share one menu.
   function openContextMenuFromButton(event: ReactMouseEvent<HTMLButtonElement>) {
     event.preventDefault()
@@ -102,24 +96,26 @@ function GlobalSkillCard({
   }
 
   const card = (
-    <div ref={cardRef} className="flex min-w-0 flex-col rounded-lg border border-border bg-card/30 p-3">
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="truncate text-sm font-medium text-foreground">{skill.name}</div>
-          <SkillProviderIcons skillName={skill.name} providers={skill.providers} />
-        </div>
+    <div ref={cardRef} className="flex min-w-0 items-center justify-between gap-4 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium text-foreground">{skill.name}</div>
+        {description ? (
+          // Full-width rows fit most descriptions on one line; a narrow
+          // column gets a second line rather than an ellipsis mid-sentence.
+          <div className="mt-0.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground @2xl:line-clamp-1">{description}</div>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-3">
+        <SkillProviderIcons skillName={skill.name} providers={skill.providers} />
         <button
           type="button"
           aria-label={`Open actions for ${skill.name}`}
           onClick={openContextMenuFromButton}
-          className="touch-manipulation flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="touch-manipulation flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
-          {uninstalling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ellipsis className="h-3.5 w-3.5 shrink-0" />}
+          {uninstalling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ellipsis className="h-4 w-4 shrink-0" />}
         </button>
       </div>
-      {description ? (
-        <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{description}</div>
-      ) : null}
     </div>
   )
 
@@ -181,11 +177,11 @@ function SkillResultCard({
   onInstall: () => void
 }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border bg-card/30 p-3">
-      <div className="min-w-0">
+    <div className="flex min-w-0 items-center justify-between gap-4 px-4 py-3">
+      <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-foreground">{skill.name}</div>
-        <div className="truncate text-xs text-muted-foreground">{skill.source} · {formatInstallCount(skill.installs)}</div>
-        {installed && message ? <div className="mt-1 truncate text-xs text-emerald-500">{message}</div> : null}
+        <div className="mt-0.5 truncate text-[13px] leading-5 text-muted-foreground">{skill.source} · {formatInstallCount(skill.installs)}</div>
+        {installed && message ? <div className="mt-0.5 truncate text-xs text-emerald-500">{message}</div> : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <a
@@ -193,7 +189,7 @@ function SkillResultCard({
           target="_blank"
           rel="noreferrer"
           aria-label={`View ${skill.name} on skills.sh`}
-          className="touch-manipulation inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="touch-manipulation inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <ExternalLink className="h-4 w-4" />
         </a>
@@ -203,12 +199,25 @@ function SkillResultCard({
           variant={installed ? "secondary" : "default"}
           disabled={installing || installed}
           onClick={onInstall}
-          className="h-6 rounded-full px-2 text-xs"
+          className="h-7 rounded-full px-3 text-xs font-semibold"
         >
           {installing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
           {installed ? "Installed" : installing ? "Installing" : "Get"}
         </Button>
       </div>
+    </div>
+  )
+}
+
+/** Labels the installed and skills.sh halves of the card while a search is on. */
+function SkillsSubheader({ children }: { children: ReactNode }) {
+  return <div className="bg-muted/40 px-4 py-1.5 text-xs text-slate-500 dark:text-slate-400">{children}</div>
+}
+
+function SkillsMessageRow({ children, tone }: { children: ReactNode; tone?: "error" }) {
+  return (
+    <div className={cn("whitespace-pre-wrap break-words px-4 py-3 text-sm", tone === "error" ? "text-destructive" : "text-muted-foreground")}>
+      {children}
     </div>
   )
 }
@@ -232,6 +241,15 @@ export function SkillsSection({
   const [installingSkillId, setInstallingSkillId] = useState<string | null>(null)
   const [uninstallingSkillId, setUninstallingSkillId] = useState<string | null>(null)
   const [installMessages, setInstallMessages] = useState<Record<string, string>>({})
+  // One query does both jobs: it filters what's installed right away and,
+  // from two characters, searches skills.sh for more to add.
+  const normalizedFilter = query.trim().toLowerCase()
+  const filteredInstalledSkills = normalizedFilter
+    ? installedSkills.filter((skill) =>
+      [skill.name, skill.description, skill.source].some((field) => field?.toLowerCase().includes(normalizedFilter))
+    )
+    : installedSkills
+  const searchingRegistry = query.trim().length >= 2
 
   async function loadInstalledSkills() {
     if (connectionStatus !== "connected") {
@@ -393,19 +411,30 @@ export function SkillsSection({
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {operationError ? <SkillErrorBlock message={operationError} /> : null}
-      <section className="flex flex-col gap-3">
-        <div className="flex h-10 items-center gap-2 rounded-lg border border-border bg-card/30 px-3">
+    <div className="flex flex-col gap-4">
+      {operationError ? <SettingsNotice className="font-mono text-xs">{operationError}</SettingsNotice> : null}
+      <div className={SETTINGS_LIST_CARD_CLASS}>
+        {/* The search field is the card's header row, on the card's own
+            surface rather than a separate input box above it. */}
+        <div className="flex h-12 items-center gap-2.5 px-4">
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
             type="text"
             role="searchbox"
+            aria-label="Filter installed skills or search skills.sh"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Add skills from skills.sh"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setQuery("")
+            }}
+            placeholder={installedSkills.length > 0
+              ? `Filter ${installedSkills.length} installed, or add from skills.sh`
+              : "Add skills from skills.sh"}
+            spellCheck={false}
+            autoComplete="off"
             className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
           />
+          {searchLoading || installedLoading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
           {query ? (
             <button
               type="button"
@@ -416,11 +445,32 @@ export function SkillsSection({
               <X className="h-3.5 w-3.5" />
             </button>
           ) : null}
-          {searchLoading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
         </div>
-        {searchError ? <div className="text-xs text-destructive">{searchError}</div> : null}
-        {results.length > 0 ? (
-          <div className="grid gap-3 md:grid-cols-2">
+
+        {installedError ? <SkillsMessageRow tone="error">{installedError}</SkillsMessageRow> : null}
+
+        {searchingRegistry ? <SkillsSubheader>Installed</SkillsSubheader> : null}
+        {filteredInstalledSkills.map((skill) => (
+          <GlobalSkillCard
+            key={skill.name}
+            skill={skill}
+            uninstalling={uninstallingSkillId === skill.name}
+            onUninstall={() => { void uninstallSkill(skill) }}
+            onRevealInFinder={revealSkillInFinder}
+          />
+        ))}
+        {!installedLoading && !installedError && filteredInstalledSkills.length === 0 ? (
+          <SkillsMessageRow>
+            {installedSkills.length === 0
+              ? "No global skills installed yet. Search above to add one."
+              : `No installed skills match “${query.trim()}”.`}
+          </SkillsMessageRow>
+        ) : null}
+
+        {searchingRegistry ? (
+          <>
+            <SkillsSubheader>From skills.sh</SkillsSubheader>
+            {searchError ? <SkillsMessageRow tone="error">{searchError}</SkillsMessageRow> : null}
             {results.map((skill) => (
               <SkillResultCard
                 key={skill.id}
@@ -431,39 +481,12 @@ export function SkillsSection({
                 onInstall={() => { void installSkill(skill) }}
               />
             ))}
-          </div>
+            {!searchLoading && !searchError && results.length === 0 ? (
+              <SkillsMessageRow>No skills found on skills.sh.</SkillsMessageRow>
+            ) : null}
+          </>
         ) : null}
-        {!searchLoading && !searchError && query.trim().length >= 2 && results.length === 0 ? (
-          <div className="rounded-lg border border-border bg-card/30 p-3 text-sm text-muted-foreground">
-            No skills found.
-          </div>
-        ) : null}
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-sm font-medium text-foreground">Installed</div>
-          {installedLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
-        </div>
-        {installedError ? <div className="text-xs text-destructive">{installedError}</div> : null}
-        {installedSkills.length > 0 ? (
-          <div className="grid gap-3 md:grid-cols-2">
-            {installedSkills.map((skill) => (
-              <GlobalSkillCard
-                key={skill.name}
-                skill={skill}
-                uninstalling={uninstallingSkillId === skill.name}
-                onUninstall={() => { void uninstallSkill(skill) }}
-                onRevealInFinder={revealSkillInFinder}
-              />
-            ))}
-          </div>
-        ) : !installedLoading ? (
-          <div className="rounded-lg border border-border bg-card/30 p-3 text-sm text-muted-foreground">
-            No global skills installed.
-          </div>
-        ) : null}
-      </section>
+      </div>
     </div>
   )
 }

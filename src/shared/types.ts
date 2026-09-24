@@ -1867,6 +1867,34 @@ export interface ChatBranchHistorySnapshot {
   entries: ChatBranchHistoryEntry[]
 }
 
+/** One file a commit touched, against its first parent. */
+export interface ChatCommitFile {
+  path: string
+  /** Set when git saw a rename. */
+  previousPath?: string
+  additions: number
+  deletions: number
+}
+
+/**
+ * What a History row's hover card shows beyond the row: who committed it,
+ * whether it merged anything, and the files it changed. Fetched per commit
+ * when the card opens; the row itself stays on `ChatBranchHistoryEntry`.
+ */
+export interface ChatCommitDetails {
+  sha: string
+  authorEmail?: string
+  /** Set only when someone other than the author committed it. */
+  committerName?: string
+  committedAt?: string
+  parentCount: number
+  /** Capped by the server; `totalFileCount` says what was left out. */
+  files: ChatCommitFile[]
+  totalFileCount: number
+  additions: number
+  deletions: number
+}
+
 export type ChatBranchListEntryKind = "local" | "remote" | "pull_request"
 
 /** A branch chosen in the UI, as sent to branch preview/merge/checkout commands. */
@@ -1883,6 +1911,60 @@ export type SelectedBranch =
       remoteRef?: string
     }
 
+/** A branch's latest commit, for its hover card. */
+export interface ChatBranchTipCommit {
+  sha: string
+  summary: string
+  authorName?: string
+  authoredAt: string
+}
+
+/** Commits on one side and not the other of two refs. */
+export interface ChatBranchDivergence {
+  /** The ref compared against: the default branch, or an upstream. */
+  name: string
+  ahead: number
+  behind: number
+}
+
+/** A pull request, read on its own for its hover card (the list carries less). */
+export interface ChatPullRequestDetails {
+  number: number
+  title: string
+  body?: string
+  url: string
+  authorLogin?: string
+  isDraft: boolean
+  baseRefName?: string
+  createdAt?: string
+  updatedAt?: string
+  additions?: number
+  deletions?: number
+  changedFiles?: number
+  commits?: number
+  comments?: number
+  /** GitHub's word for it: `clean`, `dirty` (conflicts), `blocked`, `behind`, `unstable`… */
+  mergeableState?: string
+  checks?: ChatCommitChecks
+  labels: string[]
+}
+
+/**
+ * What a branch picker row's hover card shows: the branch's tip and where it
+ * stands against the default branch and its upstream, or, for a pull request,
+ * the PR as GitHub has it. Fetched when the card opens.
+ */
+export interface ChatBranchDetails {
+  lastCommit?: ChatBranchTipCommit
+  /** Against the default branch. Unset on the default branch itself. */
+  base?: ChatBranchDivergence
+  /** A local branch's upstream. */
+  upstream?: ChatBranchDivergence & { gone: boolean }
+  /** A remote branch you already have locally, by that local name. */
+  localBranchName?: string
+  pullRequest?: ChatPullRequestDetails
+}
+
 export interface ChatBranchListEntry {
   id: string
   kind: ChatBranchListEntryKind
@@ -1893,6 +1975,10 @@ export interface ChatBranchListEntry {
   remoteRef?: string
   prNumber?: number
   prTitle?: string
+  /** A pull request's author, by GitHub login. */
+  authorLogin?: string
+  /** That author's display name on GitHub, when they've set one. */
+  authorName?: string
   headRefName?: string
   headLabel?: string
   headRepoCloneUrl?: string

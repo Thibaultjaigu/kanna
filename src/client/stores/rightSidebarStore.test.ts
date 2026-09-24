@@ -62,8 +62,6 @@ describe("rightSidebarStore", () => {
   test("keeps widget ui state isolated per project", () => {
     useRightSidebarStore.getState().setWidgetExpanded(PROJECT_ID, "changes", true)
     useRightSidebarStore.getState().setCommitDraft(PROJECT_ID, { summary: "feat: one", description: "body" })
-    useRightSidebarStore.getState().reconcileCollapsedPaths(PROJECT_ID, ["a.ts"])
-    useRightSidebarStore.getState().toggleCollapsedPath(PROJECT_ID, "a.ts")
 
     useRightSidebarStore.getState().setCommitDraft("project-2", { summary: "feat: two", description: "" })
 
@@ -71,13 +69,11 @@ describe("rightSidebarStore", () => {
       expanded: { changes: true },
       summary: "feat: one",
       description: "body",
-      collapsedPaths: { "a.ts": false },
     })
     expect(useRightSidebarStore.getState().projectUi["project-2"]).toEqual({
       expanded: {},
       summary: "feat: two",
       description: "",
-      collapsedPaths: {},
     })
   })
 
@@ -102,7 +98,7 @@ describe("rightSidebarStore", () => {
       })
     })
 
-    test("keeps the commit draft and collapsed paths, drops the history picker and browser", () => {
+    test("keeps the commit draft; drops collapsed paths, the history picker and the browser", () => {
       const migrated = migrateRightSidebarStore({
         projects: {},
         projectUi: {
@@ -122,7 +118,6 @@ describe("rightSidebarStore", () => {
         projectUi: {
           [PROJECT_ID]: {
             expanded: {},
-            collapsedPaths: { "a.ts": false },
             summary: "feat: one",
             description: "body",
           },

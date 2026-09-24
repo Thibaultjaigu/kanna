@@ -9,9 +9,9 @@ import {
 } from "../../../lib/localServersCache"
 import { cn } from "../../../lib/utils"
 import { Button } from "../../ui/button"
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "../../ui/context-menu"
-import { Input } from "../../ui/input"
-import { SwapIn, useWidgetExpanded, WidgetCard, WidgetRowMenuButton, widgetRowActivation, WIDGET_ROW_CLASS } from "./WidgetCard"
+import { ContextMenuItem } from "../../ui/context-menu"
+import { WIDGET_STRIP_INPUT_CLASS, WidgetError, WidgetList, WidgetRow, WidgetStrip } from "./parts"
+import { SwapIn, useWidgetExpanded, WidgetCard } from "./WidgetCard"
 
 /**
  * The project's saved commands (e.g. `bun run dev`), each run in a new
@@ -146,31 +146,55 @@ export function QuickActionsWidget({
           </Button>
         )}
       >
-        {/* The body is the saved actions and, while adding, the form. With
-            nothing saved and no form open there is nothing, so it collapses. */}
-        {quickActions.length > 0 || isAdding || error ? (
-          <div className="p-1.5">
-            {error ? (
-              <p className="mb-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">{error}</p>
-            ) : null}
+        {/* The add form is a Strip over the saved actions, not a row among
+            them: it acts on the list, and a row is something you run. */}
+        {isAdding ? (
+          <WidgetStrip
+            leading={<Zap />}
+            form={{ onSubmit: addQuickAction, onBlur: handleComposerBlur }}
+            trailing={(
+              <Button
+                type="submit"
+                variant="ghost"
+                size="none"
+                aria-label="Save quick action"
+                disabled={!newCommand.trim()}
+                className="h-6 rounded-md px-2 text-muted-foreground hover:!bg-transparent hover:text-foreground"
+              >
+                <CornerDownLeft className="size-3.5" />
+              </Button>
+            )}
+          >
+            <input
+              value={newCommand}
+              onChange={(event) => setNewCommand(event.target.value)}
+              placeholder="bun run dev"
+              aria-label="Command"
+              autoComplete="off"
+              spellCheck={false}
+              className={cn(WIDGET_STRIP_INPUT_CLASS, "font-mono text-[13px]")}
+              autoFocus
+            />
+          </WidgetStrip>
+        ) : null}
+        {quickActions.length > 0 || error ? (
+          <WidgetList>
+            {error ? <WidgetError>{error}</WidgetError> : null}
             {quickActions.map((action) => (
-              <ContextMenu key={action.id}>
-                <ContextMenuTrigger asChild>
-                  <div
-                    {...widgetRowActivation(() => runAction(action))}
-                    title={action.command}
-                    className={cn(WIDGET_ROW_CLASS, "group cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring")}
-                  >
-                    <SwapIn swapKey={ranActionId === action.id ? "ran" : "idle"} className="size-4 shrink-0">
-                      {ranActionId === action.id
-                        ? <Check className="size-4 text-success" aria-label="Started" />
-                        : <Play className="size-4 text-muted-foreground transition-colors group-hover:text-foreground" />}
-                    </SwapIn>
-                    <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{action.label}</span>
-                    <WidgetRowMenuButton label="Quick action options" />
-                  </div>
-                </ContextMenuTrigger>
-                <ContextMenuContent>
+              <WidgetRow
+                key={action.id}
+                icon={(
+                  <SwapIn swapKey={ranActionId === action.id ? "ran" : "idle"}>
+                    {ranActionId === action.id
+                      ? <Check className="text-success" aria-label="Started" />
+                      : <Play className="group-hover/row:text-foreground" />}
+                  </SwapIn>
+                )}
+                title={<span className="font-mono text-[13px]">{action.label}</span>}
+                tooltip={action.command}
+                onActivate={() => runAction(action)}
+                menuLabel="Quick action options"
+                menu={(
                   <ContextMenuItem
                     onSelect={() => writeQuickActions(quickActions.filter((candidate) => candidate.id !== action.id))}
                     className="text-destructive focus:text-destructive"
@@ -178,37 +202,10 @@ export function QuickActionsWidget({
                     <Trash2 className="size-3.5" />
                     <span>Delete</span>
                   </ContextMenuItem>
-                </ContextMenuContent>
-              </ContextMenu>
+                )}
+              />
             ))}
-            {isAdding ? (
-              <form
-                onSubmit={addQuickAction}
-                onBlur={handleComposerBlur}
-                // A row's height (34px), so the form swaps in without a jump.
-                className="relative flex h-[34px] min-w-0 items-center rounded-lg border border-border px-[5px]"
-              >
-                <Zap className="mr-2 size-4 shrink-0 text-muted-foreground" />
-                <Input
-                  value={newCommand}
-                  onChange={(event) => setNewCommand(event.target.value)}
-                  placeholder="bun run dev"
-                  className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent p-0 pr-8 font-mono text-[13px] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-                  autoFocus
-                />
-                <Button
-                  type="submit"
-                  variant="ghost"
-                  size="none"
-                  aria-label="Save quick action"
-                  disabled={!newCommand.trim()}
-                  className="absolute right-1 top-1/2 h-6 -translate-y-1/2 rounded-md px-2 text-muted-foreground hover:!bg-muted/40 hover:text-foreground"
-                >
-                  <CornerDownLeft className="size-3.5" />
-                </Button>
-              </form>
-            ) : null}
-          </div>
+          </WidgetList>
         ) : null}
       </WidgetCard>
     </div>
